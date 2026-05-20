@@ -231,16 +231,16 @@ html, body, [class*="css"] {
     background: #6a62c4 !important;
 }
 
-/* Delete button */
-[data-testid="stButton"]:has(button[kind="secondary"]) button,
-div[data-testid="column"] .stButton button[key*="delete"] { 
+/* Delete button — scoped via wrapper div */
+.delete-btn .stButton button {
     background: transparent !important;
     border: 1px solid #3d1f1f !important;
     color: #e05252 !important;
 }
-div[data-testid="column"] .stButton button[key*="delete"]:hover {
+.delete-btn .stButton button:hover {
     background: #2a1010 !important;
     border-color: #e05252 !important;
+    color: #e05252 !important;
 }
 
 /* Selectbox */
@@ -443,6 +443,7 @@ if page == "ingest":
                     st.session_state.page = "ask"
                     st.rerun()
             with col3:
+                st.markdown('<div class="delete-btn">', unsafe_allow_html=True)
                 if st.button("Delete", key=f"delete_{k}"):
                     # Remove from ChromaDB
                     try:
@@ -471,6 +472,7 @@ if page == "ingest":
                         remaining = list(registry.keys())
                         st.session_state.active_key = remaining[0] if remaining else None
                     st.rerun()
+                st.markdown('</div>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------------
 # Page: Ask
