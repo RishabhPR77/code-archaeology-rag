@@ -438,41 +438,60 @@ if page == "ingest":
             with col1:
                 st.markdown(f"`{v['url']}` — {v['commits']} commits")
             with col2:
-                if st.button("Switch", key=f"switch_{k}"):
-                    st.session_state.active_key = k
-                    st.session_state.page = "ask"
-                    st.rerun()
+                if st.session_state.get(f"confirm_switch_{k}"):
+                    st.warning("Switch to this repo?")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("Yes", key=f"switch_yes_{k}"):
+                            st.session_state.active_key = k
+                            st.session_state.page = "ask"
+                            del st.session_state[f"confirm_switch_{k}"]
+                            st.rerun()
+                    with c2:
+                        if st.button("No", key=f"switch_no_{k}"):
+                            del st.session_state[f"confirm_switch_{k}"]
+                            st.rerun()
+                else:
+                    if st.button("Switch", key=f"switch_{k}"):
+                        st.session_state[f"confirm_switch_{k}"] = True
+                        st.rerun()
             with col3:
-                st.markdown('<div class="delete-btn">', unsafe_allow_html=True)
-                if st.button("Delete", key=f"delete_{k}"):
-                    # Remove from ChromaDB
-                    try:
-                        import chromadb
-                        client = chromadb.PersistentClient(
-                            path=os.getenv("CHROMA_PATH", "./data/chroma_db")
-                        )
-                        safe_name = k.replace("/", "_").replace("-", "_")
-                        client.delete_collection(safe_name)
-                    except Exception:
-                        pass
-                    # Remove cloned repo
-                    import shutil
-                    clone_path = v.get("clone_path")
-                    if clone_path and Path(clone_path).exists():
-                        shutil.rmtree(clone_path, ignore_errors=True)
-                    # Remove raw chunks
-                    chunks_path = v.get("chunks_path")
-                    if chunks_path and Path(chunks_path).exists():
-                        Path(chunks_path).unlink(missing_ok=True)
-                    # Remove from registry
-                    registry.pop(k)
-                    save_registry(registry)
-                    # Reset active key if deleted the active one
-                    if st.session_state.active_key == k:
-                        remaining = list(registry.keys())
-                        st.session_state.active_key = remaining[0] if remaining else None
-                    st.rerun()
-                st.markdown('</div>', unsafe_allow_html=True)
+                if st.session_state.get(f"confirm_delete_{k}"):
+                    st.warning("Sure? This deletes all data.")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("Yes", key=f"delete_yes_{k}"):
+                            try:
+                                import chromadb
+                                client = chromadb.PersistentClient(
+                                    path=os.getenv("CHROMA_PATH", "./data/chroma_db")
+                                )
+                                safe_name = k.replace("/", "_").replace("-", "_")
+                                client.delete_collection(safe_name)
+                            except Exception:
+                                pass
+                            import shutil
+                            clone_path = v.get("clone_path")
+                            if clone_path and Path(clone_path).exists():
+                                shutil.rmtree(clone_path, ignore_errors=True)
+                            chunks_path = v.get("chunks_path")
+                            if chunks_path and Path(chunks_path).exists():
+                                Path(chunks_path).unlink(missing_ok=True)
+                            registry.pop(k)
+                            save_registry(registry)
+                            if st.session_state.active_key == k:
+                                remaining = list(registry.keys())
+                                st.session_state.active_key = remaining[0] if remaining else None
+                            del st.session_state[f"confirm_delete_{k}"]
+                            st.rerun()
+                    with c2:
+                        if st.button("No", key=f"delete_no_{k}"):
+                            del st.session_state[f"confirm_delete_{k}"]
+                            st.rerun()
+                else:
+                    if st.button("Delete", key=f"delete_{k}"):
+                        st.session_state[f"confirm_delete_{k}"] = True
+                        st.rerun()
 
 # ---------------------------------------------------------------
 # Page: Ask
