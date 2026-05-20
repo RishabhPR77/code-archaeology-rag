@@ -1,7 +1,5 @@
 # app.py
 import os
-os.environ["TRANSFORMERS_OFFLINE"] = "1"
-os.environ["HF_DATASETS_OFFLINE"] = "1"
 
 from dotenv import load_dotenv
 load_dotenv()
