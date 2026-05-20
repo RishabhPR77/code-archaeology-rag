@@ -231,6 +231,18 @@ html, body, [class*="css"] {
     background: #6a62c4 !important;
 }
 
+/* Delete button */
+[data-testid="stButton"]:has(button[kind="secondary"]) button,
+div[data-testid="column"] .stButton button[key*="delete"] { 
+    background: transparent !important;
+    border: 1px solid #3d1f1f !important;
+    color: #e05252 !important;
+}
+div[data-testid="column"] .stButton button[key*="delete"]:hover {
+    background: #2a1010 !important;
+    border-color: #e05252 !important;
+}
+
 /* Selectbox */
 .stSelectbox div[data-baseweb="select"] > div {
     background: #111115 !important;
@@ -422,13 +434,42 @@ if page == "ingest":
         st.divider()
         st.markdown("**Previously ingested**")
         for k, v in registry.items():
-            col1, col2 = st.columns([4, 1])
+            col1, col2, col3 = st.columns([4, 1, 1])
             with col1:
                 st.markdown(f"`{v['url']}` — {v['commits']} commits")
             with col2:
                 if st.button("Switch", key=f"switch_{k}"):
                     st.session_state.active_key = k
                     st.session_state.page = "ask"
+                    st.rerun()
+            with col3:
+                if st.button("Delete", key=f"delete_{k}"):
+                    # Remove from ChromaDB
+                    try:
+                        import chromadb
+                        client = chromadb.PersistentClient(
+                            path=os.getenv("CHROMA_PATH", "./data/chroma_db")
+                        )
+                        safe_name = k.replace("/", "_").replace("-", "_")
+                        client.delete_collection(safe_name)
+                    except Exception:
+                        pass
+                    # Remove cloned repo
+                    import shutil
+                    clone_path = v.get("clone_path")
+                    if clone_path and Path(clone_path).exists():
+                        shutil.rmtree(clone_path, ignore_errors=True)
+                    # Remove raw chunks
+                    chunks_path = v.get("chunks_path")
+                    if chunks_path and Path(chunks_path).exists():
+                        Path(chunks_path).unlink(missing_ok=True)
+                    # Remove from registry
+                    registry.pop(k)
+                    save_registry(registry)
+                    # Reset active key if deleted the active one
+                    if st.session_state.active_key == k:
+                        remaining = list(registry.keys())
+                        st.session_state.active_key = remaining[0] if remaining else None
                     st.rerun()
 
 # ---------------------------------------------------------------
