@@ -370,7 +370,6 @@ with radio_col:
         horizontal=True,
         label_visibility="collapsed",
         index=current_idx,
-        key="nav_radio",
     )
 
 if selected_page != st.session_state.page:
@@ -430,7 +429,6 @@ if page == "ingest":
                 if st.button("Switch", key=f"switch_{k}"):
                     st.session_state.active_key = k
                     st.session_state.page = "ask"
-                    st.session_state.nav_radio = "ask"
                     st.rerun()
 
 # ---------------------------------------------------------------
