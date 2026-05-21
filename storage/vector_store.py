@@ -13,7 +13,7 @@ model = SentenceTransformer("BAAI/bge-small-en-v1.5")
 
 PINECONE_INDEX = "code-archaeologist"
 EMBEDDING_DIM  = 384
-# BGE query prefix — boosts retrieval accuracy for question-type queries
+# BGE query prefix - boosts retrieval accuracy for question-type queries
 BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 
 def _embed_query(text: str) -> list:

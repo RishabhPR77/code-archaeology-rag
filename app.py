@@ -1,3 +1,4 @@
+# app.py
 import os
 
 from dotenv import load_dotenv
@@ -66,7 +67,7 @@ html, body, [class*="css"] {
     align-items: center !important;
 }
 
-/* Radio nav — hide the widget label */
+/* Radio nav - hide the widget label */
 [data-testid="stRadio"] > label { display: none !important; }
 
 /* Radio group: horizontal flex row */
@@ -230,7 +231,7 @@ html, body, [class*="css"] {
     background: #6a62c4 !important;
 }
 
-/* Delete button — scoped via wrapper div */
+/* Delete button - scoped via wrapper div */
 .delete-btn .stButton button {
     background: transparent !important;
     border: 1px solid #3d1f1f !important;
@@ -434,7 +435,7 @@ if page == "ingest":
         for k, v in registry.items():
             col1, col2, col3 = st.columns([4, 1, 1])
             with col1:
-                st.markdown(f"`{v['url']}` — {v['commits']} commits")
+                st.markdown(f"`{v['url']}` - {v['commits']} commits")
             with col2:
                 if st.session_state.get(f"confirm_switch_{k}"):
                     st.warning("Switch to this repo?")
@@ -592,7 +593,7 @@ elif page == "ask":
 # ---------------------------------------------------------------
 elif page == "timeline":
     st.markdown('<div class="page-title">File Timeline</div>', unsafe_allow_html=True)
-    st.markdown('<div class="page-sub">Trace how any file evolved — with an LLM summary of every change.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="page-sub">Trace how any file evolved with an LLM summary of every change.</div>', unsafe_allow_html=True)
 
     if not active_key:
         st.warning("No repository ingested yet.")
@@ -637,7 +638,7 @@ elif page == "timeline":
 # ---------------------------------------------------------------
 elif page == "hotfiles":
     st.markdown('<div class="page-title">Hot Files</div>', unsafe_allow_html=True)
-    st.markdown('<div class="page-sub">Files changed most frequently — the core of the codebase.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="page-sub">Files changed most frequently, the core of the codebase.</div>', unsafe_allow_html=True)
 
     if not active_key:
         st.warning("No repository ingested yet.")
@@ -663,7 +664,7 @@ elif page == "hotfiles":
 # ---------------------------------------------------------------
 elif page == "cochange":
     st.markdown('<div class="page-title">Co-Change Analysis</div>', unsafe_allow_html=True)
-    st.markdown('<div class="page-sub">File pairs that are almost always changed together — reveals hidden dependencies.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="page-sub">File pairs that are almost always changed together, reveals hidden dependencies.</div>', unsafe_allow_html=True)
 
     if not active_key:
         st.warning("No repository ingested yet.")
@@ -723,6 +724,6 @@ elif page == "authors":
     with col2:
         st.markdown("**Top contributors**")
         for author_data in data[:8]:
-            with st.expander(f"{author_data['author']} — {author_data['commits']} commits"):
+            with st.expander(f"{author_data['author']} - {author_data['commits']} commits"):
                 for f in author_data["top_files"]:
-                    st.markdown(f"`{f['file']}` — {f['changes']}x")
+                    st.markdown(f"`{f['file']}` - {f['changes']}x")

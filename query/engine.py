@@ -26,13 +26,13 @@ def build_prompt(question: str, chunks: list[dict], mode_instruction: str = "") 
 
     context = "\n\n".join(context_blocks)
 
-    return f"""You are Code Archaeologist — an expert software historian who explains \
+    return f"""You are Code Archaeologist - an expert software historian who explains \
 why code changes were made, not just what changed.
 
 Rules:
 - Answer using ONLY the commits provided below.
 - Always cite which commit(s) your answer draws from (author + date + files).
-- Be specific and technical — name functions, modules, patterns when visible.
+- Be specific and technical - name functions, modules, patterns when visible.
 - If the commits don't contain enough information, say so clearly.
 - Do not hallucinate details not present in the commits.
 {("- " + mode_instruction) if mode_instruction else ""}
@@ -71,7 +71,7 @@ def ask(question: str, top_k: int = 8,
             {
                 "role":    "system",
                 "content": (
-                    "You are Code Archaeologist — a precise, technical expert who explains "
+                    "You are Code Archaeologist - a precise, technical expert who explains "
                     "the history and reasoning behind code changes. You cite specific commits, "
                     "authors, and files in your answers."
                 )

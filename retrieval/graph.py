@@ -95,7 +95,7 @@ class CommitGraph:
             return "chore", "#888780"
         return "other", "#378ADD"
 
-    # ── Visualization A — Timeline Swimlane ────────────────────────
+    # Visualization A - Timeline Swimlane 
     def visualize_timeline(self, output_path="./data/timeline_graph.html"):
         sorted_chunks = sorted(self.chunks, key=lambda c: c["metadata"]["timestamp"])
         if not sorted_chunks:
@@ -196,7 +196,7 @@ class CommitGraph:
                 f'onmouseenter="showTip(\'{sid}\',event)" onmouseleave="hideTip()" '
                 f'onclick="pinTip(\'{sid}\')"/>'
             )
-            # SHA only — no date label (too cluttered)
+            # SHA only - no date label (too cluttered)
             nodes.append(
                 f'<text x="{x}" y="{y+R+13}" text-anchor="middle" '
                 f'font-family="ui-monospace,monospace" font-size="9" fill="#3a3a4a" '
@@ -317,7 +317,7 @@ function pinTip(id){{
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(html)
 
-    # ── Visualization B — Commit Log (searchable table) ────────────
+    # Visualization B  Commit Log (searchable table) 
     def visualize_commit_log(self, output_path="./data/commit_log.html"):
         sorted_chunks = sorted(self.chunks, key=lambda c: c["metadata"]["timestamp"], reverse=True)
 
