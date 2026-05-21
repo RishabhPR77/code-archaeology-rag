@@ -361,7 +361,6 @@ pages = [
     ("ingest",   "Ingest"),
     ("ask",      "Ask"),
     ("timeline", "Timeline"),
-    ("graph",    "Graph"),
     ("hotfiles", "Hot Files"),
     ("cochange", "Co-Change"),
     ("authors",  "Authors"),
@@ -497,38 +496,101 @@ if page == "ingest":
 # Page: Ask
 # ---------------------------------------------------------------
 elif page == "ask":
-    st.markdown('<div class="page-title">Ask a Question</div>', unsafe_allow_html=True)
-    st.markdown('<div class="page-sub">Ask anything about why code was changed in this repository.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="page-title">Ask</div>', unsafe_allow_html=True)
+    st.markdown('<div class="page-sub">Ask anything about this repository\'s commit history in plain English.</div>', unsafe_allow_html=True)
 
     if not active_key:
         st.warning("No repository ingested yet. Go to Ingest.")
         st.stop()
 
-    question = st.text_input("Question", placeholder="Why was the session interface modified?", label_visibility="collapsed")
+    # ── Suggested questions ──────────────────────────────────────
+    SUGGESTIONS = [
+        "What are the most significant changes made recently?",
+        "Which part of the codebase changed the most?",
+        "What bugs were fixed and by whom?",
+        "Summarize what each author worked on.",
+        "Were there any major refactors or cleanups?",
+        "What new features were added?",
+        "Which files are most error-prone based on fix commits?",
+        "What did the team work on this month?",
+    ]
 
-    only_pr = st.checkbox("Only commits with linked PRs")
-    top_k = 7   # fixed — system decides, not the user
+    if "ask_question" not in st.session_state:
+        st.session_state.ask_question = ""
+    if "ask_history" not in st.session_state:
+        st.session_state.ask_history = []
 
-    if st.button("Ask"):
-        if not question:
-            st.warning("Enter a question.")
-        else:
-            filters = {"has_pr": True} if only_pr else None
-            with st.spinner("Retrieving commits and generating answer..."):
-                result = ask(question, top_k=top_k, filters=filters, collection_name=active_key)
+    st.markdown("**Suggested questions**")
+    cols = st.columns(4)
+    for i, suggestion in enumerate(SUGGESTIONS):
+        with cols[i % 4]:
+            if st.button(suggestion, key=f"sug_{i}", use_container_width=True):
+                st.session_state.ask_question = suggestion
+                st.rerun()
 
-            st.markdown(f'<div class="answer-box">{result["answer"]}</div>', unsafe_allow_html=True)
+    st.markdown("<div style='margin-top:1.2rem'></div>", unsafe_allow_html=True)
 
-            st.markdown("**Sources**")
-            for i, s in enumerate(result["sources"], 1):
-                st.markdown(f"""
-                <div class="source-card">
-                    <span class="source-author">{s['author']}</span>
-                    <span class="source-score">{s['score']}</span>
-                    <div style="color:#555;margin-top:0.3rem;font-size:0.78rem">{s['timestamp'][:10]}</div>
-                    <div style="color:#666;margin-top:0.2rem;font-family:'DM Mono',monospace;font-size:0.72rem">{s['files'][:80]}</div>
-                </div>
-                """, unsafe_allow_html=True)
+    # ── Input ────────────────────────────────────────────────────
+    col_q, col_btn = st.columns([5, 1])
+    with col_q:
+        question = st.text_input(
+            "Question",
+            value=st.session_state.ask_question,
+            placeholder="e.g. Why was the auth module refactored?",
+            label_visibility="collapsed",
+            key="question_input"
+        )
+    with col_btn:
+        ask_clicked = st.button("Ask →", use_container_width=True)
+
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        only_pr = st.checkbox("Only commits with linked PRs")
+    with col2:
+        mode = st.selectbox("Mode", ["Detailed", "Quick summary", "Bullet points"], label_visibility="collapsed")
+
+    # ── Run query ────────────────────────────────────────────────
+    if ask_clicked and question:
+        st.session_state.ask_question = ""
+
+        mode_prompt = {
+            "Detailed":       "",
+            "Quick summary":  " Answer in 2-3 sentences only.",
+            "Bullet points":  " Answer as a concise bullet point list.",
+        }.get(mode, "")
+
+        full_question = question + mode_prompt
+        filters = {"has_pr": True} if only_pr else None
+
+        with st.spinner("Searching commits and generating answer..."):
+            result = ask(full_question, top_k=8, filters=filters, collection_name=active_key)
+
+        # Save to history
+        st.session_state.ask_history.insert(0, {
+            "question": question,
+            "answer":   result["answer"],
+            "mode":     mode,
+        })
+        # Keep last 10
+        st.session_state.ask_history = st.session_state.ask_history[:10]
+
+    # ── Show history ─────────────────────────────────────────────
+    if st.session_state.ask_history:
+        for i, item in enumerate(st.session_state.ask_history):
+            with st.expander(f"{'▶ ' if i == 0 else ''}Q: {item['question']}", expanded=(i == 0)):
+                badge_color = {"Detailed": "#7F77DD", "Quick summary": "#1D9E75", "Bullet points": "#378ADD"}.get(item["mode"], "#888")
+                st.markdown(
+                    f'<span style="display:inline-block;padding:2px 10px;border-radius:20px;'
+                    f'font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;'
+                    f'background:{badge_color}22;color:{badge_color};margin-bottom:10px;">'
+                    f'{item["mode"]}</span>',
+                    unsafe_allow_html=True
+                )
+                st.markdown(f'<div class="answer-box">{item["answer"]}</div>', unsafe_allow_html=True)
+
+        if st.button("Clear history"):
+            st.session_state.ask_history = []
+            st.rerun()
 
 # ---------------------------------------------------------------
 # Page: Timeline
@@ -575,44 +637,6 @@ elif page == "timeline":
 # ---------------------------------------------------------------
 # Page: Graph
 # ---------------------------------------------------------------
-elif page == "graph":
-    st.markdown('<div class="page-title">Graph Explorer</div>', unsafe_allow_html=True)
-    st.markdown('<div class="page-sub">Trace every commit from past to future — who built what and when.</div>', unsafe_allow_html=True)
-
-    if not active_key:
-        st.warning("No repository ingested yet.")
-        st.stop()
-
-    tab1, tab2 = st.tabs(["Timeline Swimlane", "Commit DAG"])
-
-    with tab1:
-        st.markdown("One row per author. Commits flow **left → right** in time. Color = commit type. Hover any node for full commit details.")
-        if st.button("Generate Timeline", key="gen_timeline_graph"):
-            cg          = CommitGraph(chunks_path=active_chunks_path)
-            output_path = f"./data/{active_key}_timeline_graph.html"
-            with st.spinner("Building timeline..."):
-                cg.visualize_timeline(output_path=output_path)
-            st.session_state[f"timeline_graph_{active_key}"] = output_path
-
-        graph_path = st.session_state.get(f"timeline_graph_{active_key}")
-        if graph_path and Path(graph_path).exists():
-            with open(graph_path, "r", encoding="utf-8") as f:
-                st.components.v1.html(f.read(), height=880, scrolling=True)
-
-    with tab2:
-        st.markdown("Full commit history — searchable and filterable by author, type, or keyword.")
-        if st.button("Generate Commit Log", key="gen_dag_graph"):
-            cg          = CommitGraph(chunks_path=active_chunks_path)
-            output_path = f"./data/{active_key}_commit_log.html"
-            with st.spinner("Building commit log..."):
-                cg.visualize_commit_log(output_path=output_path)
-            st.session_state[f"dag_graph_{active_key}"] = output_path
-
-        graph_path = st.session_state.get(f"dag_graph_{active_key}")
-        if graph_path and Path(graph_path).exists():
-            with open(graph_path, "r", encoding="utf-8") as f:
-                st.components.v1.html(f.read(), height=820, scrolling=True)
-
 # ---------------------------------------------------------------
 # Page: Hot Files
 # ---------------------------------------------------------------
