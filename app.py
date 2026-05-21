@@ -461,12 +461,9 @@ if page == "ingest":
                     with c1:
                         if st.button("Yes", key=f"delete_yes_{k}"):
                             try:
-                                import chromadb
-                                client = chromadb.PersistentClient(
-                                    path=os.getenv("CHROMA_PATH", "./data/chroma_db")
-                                )
-                                safe_name = k.replace("/", "_").replace("-", "_")
-                                client.delete_collection(safe_name)
+                                from storage.vector_store import VectorStore
+                                vs = VectorStore(collection_name=k)
+                                vs.delete_namespace()
                             except Exception:
                                 pass
                             import shutil
