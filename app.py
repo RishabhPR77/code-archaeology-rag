@@ -577,48 +577,41 @@ elif page == "timeline":
 # ---------------------------------------------------------------
 elif page == "graph":
     st.markdown('<div class="page-title">Graph Explorer</div>', unsafe_allow_html=True)
-    st.markdown('<div class="page-sub">Two views of your codebase. File graph shows coupling. Timeline shows how work evolved.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="page-sub">Trace every commit from past to future — who built what and when.</div>', unsafe_allow_html=True)
 
     if not active_key:
         st.warning("No repository ingested yet.")
         st.stop()
 
-    tab1, tab2 = st.tabs(["File Coupling Graph", "Timeline Swimlane"])
+    tab1, tab2 = st.tabs(["Timeline Swimlane", "Commit DAG"])
 
     with tab1:
-        st.markdown("Nodes are files. Edge thickness shows how often two files change together. Node size shows total change frequency. Color shows file type.")
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            min_cochange = st.slider("Minimum co-changes to show edge", 1, 10, 2)
-        with col2:
-            if st.button("Generate File Graph", key="gen_file_graph"):
-                graph       = CommitGraph(chunks_path=active_chunks_path)
-                output_path = f"./data/{active_key}_file_graph.html"
-                with st.spinner("Building file coupling graph..."):
-                    graph.visualize_files(
-                        output_path=output_path,
-                        min_cochange=min_cochange
-                    )
-                st.session_state[f"file_graph_{active_key}"] = output_path
-
-        graph_path = st.session_state.get(f"file_graph_{active_key}")
-        if graph_path and Path(graph_path).exists():
-            with open(graph_path, "r", encoding="utf-8") as f:
-                st.components.v1.html(f.read(), height=780, scrolling=False)
-
-    with tab2:
-        st.markdown("Each row is an author. Commits flow left to right in time. Color shows commit type — bug fix, feature, refactor, chore, docs.")
-        if st.button("Generate Timeline Graph", key="gen_timeline_graph"):
-            graph       = CommitGraph(chunks_path=active_chunks_path)
+        st.markdown("One row per author. Commits flow **left → right** in time. Color = commit type. Hover any node for full commit details.")
+        if st.button("Generate Timeline", key="gen_timeline_graph"):
+            cg          = CommitGraph(chunks_path=active_chunks_path)
             output_path = f"./data/{active_key}_timeline_graph.html"
-            with st.spinner("Building timeline graph..."):
-                graph.visualize_timeline(output_path=output_path)
+            with st.spinner("Building timeline..."):
+                cg.visualize_timeline(output_path=output_path)
             st.session_state[f"timeline_graph_{active_key}"] = output_path
 
         graph_path = st.session_state.get(f"timeline_graph_{active_key}")
         if graph_path and Path(graph_path).exists():
             with open(graph_path, "r", encoding="utf-8") as f:
-                st.components.v1.html(f.read(), height=880, scrolling=False)
+                st.components.v1.html(f.read(), height=880, scrolling=True)
+
+    with tab2:
+        st.markdown("Each node = one commit. **Arrow direction = time** (older → newer). Color = author. Hover for commit details. Drag to explore.")
+        if st.button("Generate Commit DAG", key="gen_dag_graph"):
+            cg          = CommitGraph(chunks_path=active_chunks_path)
+            output_path = f"./data/{active_key}_dag_graph.html"
+            with st.spinner("Building commit graph..."):
+                cg.visualize(output_path=output_path)
+            st.session_state[f"dag_graph_{active_key}"] = output_path
+
+        graph_path = st.session_state.get(f"dag_graph_{active_key}")
+        if graph_path and Path(graph_path).exists():
+            with open(graph_path, "r", encoding="utf-8") as f:
+                st.components.v1.html(f.read(), height=820, scrolling=False)
 
 # ---------------------------------------------------------------
 # Page: Hot Files
