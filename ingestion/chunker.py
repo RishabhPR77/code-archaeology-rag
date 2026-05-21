@@ -1,4 +1,3 @@
-# ingestion/chunker.py
 from dataclasses import asdict
 
 def build_chunks(commits, pull_requests) -> list[dict]:
@@ -52,7 +51,7 @@ def _build_text(commit, pr=None) -> str:
         f"LINES: +{commit.insertions} / -{commit.deletions}",
     ]
 
-    # PR context is gold for intent — add it before diff
+    # PR context is gold for intent - add it before diff
     if pr:
         parts.append(f"PR #{pr.number}: {pr.title}")
         if pr.body and pr.body.strip():
@@ -68,7 +67,7 @@ def _build_text(commit, pr=None) -> str:
                 f"  - {s[:300]}" for s in pr.review_summaries[:3]
             ))
 
-    # Diff last — noisy but useful for keyword/BM25 matches
+    # Diff last - noisy but useful for keyword/BM25 matches
     if commit.diff:
         parts.append(f"DIFF:\n{commit.diff[:3000]}")
 

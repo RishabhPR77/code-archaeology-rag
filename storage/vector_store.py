@@ -1,4 +1,3 @@
-# storage/vector_store.py
 import os
 import time
 import math
@@ -50,7 +49,6 @@ class VectorStore:
         self.namespace = collection_name.replace("/", "_").replace("-", "_")
         self.index     = _get_index()
 
-    # ── Ingest ─────────────────────────────────────────────────────
     def ingest(self, chunks: list[dict], batch_size: int = 50):
         all_ids = [c["id"] for c in chunks]
         existing_ids = set()
@@ -89,7 +87,7 @@ class VectorStore:
         ns = self.index.describe_index_stats().namespaces.get(self.namespace)
         print(f"Total in namespace '{self.namespace}': {ns.vector_count if ns else 0}")
 
-    # ── Hybrid search (dense Pinecone + BM25 rerank) ───────────────
+    # Hybrid search (dense Pinecone + BM25 rerank) 
     def search(self, question: str, top_k: int = 5,
                filters: dict = None) -> list[dict]:
         """

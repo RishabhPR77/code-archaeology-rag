@@ -1,4 +1,3 @@
-# ingestion/github_enricher.py
 import os, re, time
 from dataclasses import dataclass
 from github import Github, RateLimitExceededException

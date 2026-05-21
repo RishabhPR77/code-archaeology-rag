@@ -1,4 +1,3 @@
-# retrieval/graph.py
 import json
 import networkx as nx
 from collections import defaultdict
@@ -39,7 +38,7 @@ class CommitGraph:
                 else:
                     self.graph.add_edge(src, tgt, files=[file], weight=1)
 
-    # ── Query helpers ──────────────────────────────────────────────
+    # Query helpers 
     def file_timeline(self, filename):
         results = [{"sha": c["metadata"]["sha"], "author": c["metadata"]["author"],
                     "timestamp": c["metadata"]["timestamp"],
@@ -80,7 +79,7 @@ class CommitGraph:
         return [{"file": f, "change_count": c}
                 for f, c in sorted(fc.items(), key=lambda x: x[1], reverse=True)[:top_n]]
 
-    # ── Helpers ────────────────────────────────────────────────────
+    # Helpers
     @staticmethod
     def _commit_type(msg):
         m = msg.lower()
