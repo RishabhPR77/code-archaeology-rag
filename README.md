@@ -1,6 +1,6 @@
 # Code Archaeologist
 
-**Ask why any code was written — and get a grounded answer from the actual Git history.**
+**Ask why any code was written - and get a grounded answer from the actual Git history.**
 
 🔗 [Live Demo](https://code-archaeology-rag.streamlit.app) &nbsp;·&nbsp; [GitHub](https://github.com/RishabhPR77/code-archaeology-rag)
 
@@ -8,9 +8,9 @@
 
 ## The Problem
 
-Every developer has opened an old file and thought — *why is this written like this?*
+Every developer has opened an old file and thought - *why is this written like this?*
 
-The person who wrote it may have left. There is no documentation. The commit message says "fix bug." The knowledge of why a decision was made is buried in Git history, PR descriptions, and review comments — technically accessible but practically unreachable.
+The person who wrote it may have left. There is no documentation. The commit message says "fix bug." The knowledge of why a decision was made is buried in Git history, PR descriptions, and review comments - technically accessible but practically unreachable.
 
 ---
 
@@ -25,7 +25,7 @@ Paste a public GitHub URL. The system ingests the commit history, embeds it into
 - *"Which files are most tightly coupled?"*
 - *"How did sessions.py evolve over the last two years?"*
 
-It retrieves real commits as evidence and uses LLaMA-3.3-70B to synthesize a grounded, cited answer — not a guess.
+It retrieves real commits as evidence and uses LLaMA-3.3-70B to synthesize a grounded, cited answer - not a guess.
 
 ---
 
@@ -42,17 +42,17 @@ Suggested repos to try:
 
 ## Features
 
-**Ask** — question answering over commit history with three modes: Detailed, Quick Summary, and Bullet Points. Suggested questions included. Last 10 answers saved in session history.
+**Ask** - question answering over commit history with three modes: Detailed, Quick Summary, and Bullet Points. Suggested questions included. Last 10 answers saved in session history.
 
-**File Timeline** — trace how any file evolved over time. Returns a chronological commit table, a monthly activity chart, and an LLM-generated analysis covering major phases of change, contributing authors, and recurring patterns.
+**File Timeline** - trace how any file evolved over time. Returns a chronological commit table, a monthly activity chart, and an LLM-generated analysis covering major phases of change, contributing authors, and recurring patterns.
 
-**Hot Files** — ranks files by change frequency. Tells you where the core of a codebase lives and which files are most likely to carry historical complexity.
+**Hot Files** - ranks files by change frequency. Tells you where the core of a codebase lives and which files are most likely to carry historical complexity.
 
-**Co-Change Analysis** — finds file pairs that are almost always modified together. Reveals hidden dependencies and coupling that static analysis tools miss.
+**Co-Change Analysis** - finds file pairs that are almost always modified together. Reveals hidden dependencies and coupling that static analysis tools miss.
 
-**Author Breakdown** — shows who built what, how many commits each person made, and which files they owned. Answers the question: if this person left, what knowledge would we lose?
+**Author Breakdown** - shows who built what, how many commits each person made, and which files they owned. Answers the question: if this person left, what knowledge would we lose?
 
-**Multi-repo support** — ingest any number of public repos. Switch between them from the Ingest page. Each repo gets its own isolated namespace.
+**Multi-repo support** - ingest any number of public repos. Switch between them from the Ingest page. Each repo gets its own isolated namespace.
 
 ---
 
@@ -65,17 +65,17 @@ Git history extraction          GitHub API (PRs, reviews)
       ↓                                  ↓
   git_loader.py              github_enricher.py
       ↓                                  ↓
-              chunker.py — builds enriched chunks
+              chunker.py - builds enriched chunks
                     ↓
-         vector_store.py — BGE embeddings + Pinecone
+         vector_store.py - BGE embeddings + Pinecone
                     ↓
            Hybrid search (dense 60% + BM25 40%)
                     ↓
-            query/engine.py — Groq + LLaMA-3.3-70B
+            query/engine.py - Groq + LLaMA-3.3-70B
                     ↓
-            retrieval/graph.py — NetworkX knowledge graph
+            retrieval/graph.py - NetworkX knowledge graph
                     ↓
-                 app.py — Streamlit UI
+                 app.py - Streamlit UI
 ```
 
 ---
@@ -98,7 +98,7 @@ Git history extraction          GitHub API (PRs, reviews)
 ## How It Works
 
 ### 1. Ingestion Pipeline
-When you paste a GitHub URL, the system clones the repo locally and walks through every commit using GitPython. For each commit it extracts the SHA, message, author, timestamp, files changed, insertion/deletion counts, and the actual code diff. Each commit becomes one chunk — a structured object with a rich text field for embedding and a metadata dictionary for filtering.
+When you paste a GitHub URL, the system clones the repo locally and walks through every commit using GitPython. For each commit it extracts the SHA, message, author, timestamp, files changed, insertion/deletion counts, and the actual code diff. Each commit becomes one chunk - a structured object with a rich text field for embedding and a metadata dictionary for filtering.
 
 The text field combines commit message, a classified intent label (BUG FIX / FEATURE / REFACTOR / DOCS / CHORE), author, date, files, and diff. This structure gives the embedding model strong semantic signal about what kind of change was made and why.
 
@@ -111,7 +111,7 @@ At query time the system fetches the top candidates from Pinecone (dense retriev
 Retrieved chunks are injected into a structured prompt that tells LLaMA to answer only from the provided evidence, cite specific commits, and clearly state when there is not enough information. Temperature is set at 0.15 for factual, grounded responses.
 
 ### 4. Knowledge Graph
-A directed NetworkX graph connects commits that touched the same files, with time flowing forward. This powers the four analysis pages — file timeline, co-change analysis, author breakdown, and hot files — without any additional API calls.
+A directed NetworkX graph connects commits that touched the same files, with time flowing forward. This powers the four analysis pages - file timeline, co-change analysis, author breakdown, and hot files - without any additional API calls.
 
 ---
 
@@ -153,7 +153,7 @@ Go to `http://localhost:8501`, paste any public GitHub URL on the Ingest page, a
 
 ```
 code-archaeology-rag/
-├── app.py                      # Streamlit UI — all 6 pages
+├── app.py                      # Streamlit UI - all 6 pages
 ├── ingestion/
 │   ├── git_loader.py           # CommitRecord extraction via GitPython
 │   ├── github_enricher.py      # PR and review data via PyGithub
@@ -163,7 +163,7 @@ code-archaeology-rag/
 ├── retrieval/
 │   └── graph.py                # NetworkX knowledge graph + 4 analysis types
 ├── query/
-│   └── engine.py               # RAG pipeline — ask() and timeline_ask()
+│   └── engine.py               # RAG pipeline - ask() and timeline_ask()
 ├── data/
 │   ├── repos.json              # Registry of ingested repos
 │   └── raw/                    # Per-repo chunk JSON files
@@ -176,7 +176,7 @@ code-archaeology-rag/
 
 - Only public GitHub repositories are supported
 - PR data requires the GitHub API, which may be rate-limited or blocked on some networks. The system works without it but answer quality is lower since PR descriptions carry most of the "why" context
-- Ingestion time scales with commit count — 300 commits takes about 3 minutes, 1000 commits about 10 minutes
+- Ingestion time scales with commit count - 300 commits takes about 3 minutes, 1000 commits about 10 minutes
 - Answer quality depends on commit message quality. Repos with descriptive messages produce much better answers than repos where every commit says "update" or "fix"
 
 ---
@@ -185,12 +185,12 @@ code-archaeology-rag/
 
 Most RAG projects are "chat with your PDF." This project is different because:
 
-The data source is live Git history — something every real software company has. The system retrieves developer **intent** not just file content. It solves a pain point every developer feels immediately — staring at old code with no context. And it combines semantic search, keyword matching, and temporal graph analysis in a single pipeline rather than relying on any one technique alone.
+The data source is live Git history - something every real software company has. The system retrieves developer **intent** not just file content. It solves a pain point every developer feels immediately - staring at old code with no context. And it combines semantic search, keyword matching, and temporal graph analysis in a single pipeline rather than relying on any one technique alone.
 
 ---
 
 ## Built By
 
-**Rishabh Patidar** — B.Tech Information Technology, MITS Gwalior
+**Rishabh Patidar** - B.Tech Information Technology, MITS Gwalior
 
 [LinkedIn](https://linkedin.com/in/rishabh-ptdr) &nbsp;·&nbsp; [GitHub](https://github.com/RishabhPR77)
