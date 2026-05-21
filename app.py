@@ -414,7 +414,7 @@ if page == "ingest":
     with col2:
         max_commits = st.selectbox("Commits", [50, 100, 200, 300, 500, 1000], index=3, label_visibility="collapsed")
 
-    st.caption("50 commits ~ 30s   |   300 commits ~ 3min   |   1000 commits ~ 10min")
+    st.caption("50 commits ~ 2min   |   300 commits ~ 6min   |   1000 commits ~ 20min")
 
     if st.button("Ingest Repository"):
         if not repo_url:
