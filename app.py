@@ -525,7 +525,7 @@ elif page == "ask":
     for i, suggestion in enumerate(SUGGESTIONS):
         with cols[i % 4]:
             if st.button(suggestion, key=f"sug_{i}", use_container_width=True):
-                st.session_state.ask_question = suggestion
+                st.session_state.question_input = suggestion
                 st.rerun()
 
     st.markdown("<div style='margin-top:1.2rem'></div>", unsafe_allow_html=True)
@@ -535,7 +535,6 @@ elif page == "ask":
     with col_q:
         question = st.text_input(
             "Question",
-            value=st.session_state.ask_question,
             placeholder="e.g. Why was the auth module refactored?",
             label_visibility="collapsed",
             key="question_input"
