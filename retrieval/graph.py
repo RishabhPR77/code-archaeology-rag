@@ -1,7 +1,6 @@
 # retrieval/graph.py
 import json
 import networkx as nx
-from pyvis.network import Network
 from collections import defaultdict
 from datetime import datetime
 
@@ -245,11 +244,6 @@ class CommitGraph:
                 f'<text x="{x}" y="{y + R + 11}" text-anchor="middle" '
                 f'font-family="monospace" font-size="8" fill="#444">{nd["sha"][:7]}</text>'
             )
-            # date label above node
-            nodes_svg.append(
-                f'<text x="{x}" y="{y - R - 4}" text-anchor="middle" '
-                f'font-family="monospace" font-size="8" fill="#333">{nd["date"]}</text>'
-            )
             # tooltip data div
             tooltip_divs.append(
                 f'<div id="tip_{safe_id}" class="tip-data" '
@@ -438,91 +432,3 @@ function pinTip(safe_id) {{
 
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(html)
-
-    # ------------------------------------------------------------------
-    # Visualization B — Commit DAG (pyvis, directed, colored by author)
-    # ------------------------------------------------------------------
-    def visualize(self, output_path="./data/graph.html", filter_file=None, max_nodes=80):
-        if filter_file:
-            relevant_ids = set(
-                chunk["id"] for chunk in self.chunks
-                if filter_file.lower() in chunk["metadata"]["files"].lower()
-            )
-            subgraph = self.graph.subgraph(relevant_ids)
-        else:
-            nodes_by_degree = sorted(self.graph.degree(), key=lambda x: x[1], reverse=True)[:max_nodes]
-            subgraph = self.graph.subgraph([n for n, _ in nodes_by_degree])
-
-        author_counts = defaultdict(int)
-        for chunk in self.chunks:
-            author_counts[chunk["metadata"]["author"]] += 1
-        sorted_authors = sorted(author_counts, key=lambda a: author_counts[a], reverse=True)
-        palette = ["#1D9E75","#E24B4A","#7F77DD","#378ADD","#D85A30","#BA7517","#D4537E","#639922","#888780"]
-        author_color = {a: palette[i % len(palette)] for i, a in enumerate(sorted_authors)}
-
-        net = Network(height="780px", width="100%", directed=True, bgcolor="#0d0d0f", font_color="#e8e6e0")
-        net.barnes_hut(gravity=-5000, central_gravity=0.2, spring_length=180, spring_strength=0.04, damping=0.95)
-
-        for node_id in subgraph.nodes():
-            data  = self.graph.nodes[node_id]
-            color = author_color.get(data["author"], "#888")
-            title = (
-                f"<b>{data['sha']}</b><br>"
-                f"<b>Author:</b> {data['author']}<br>"
-                f"<b>Date:</b> {data['timestamp'][:10]}<br>"
-                f"<b>Message:</b> {data['message'][:80]}<br>"
-                f"<b>Files:</b> {data['files'][:100]}"
-            )
-            net.add_node(
-                node_id,
-                label=f"{data['sha'][:7]}\n{data['author'].split()[0]}\n{data['timestamp'][:10]}",
-                title=title,
-                color={"background": color, "border": "#0d0d0f", "highlight": {"background": color, "border": "#fff"}},
-                size=18,
-                font={"size": 9, "color": "#aaa", "face": "monospace"},
-                borderWidth=1,
-                shadow=True
-            )
-
-        for src, tgt, edata in subgraph.edges(data=True):
-            net.add_edge(
-                src, tgt,
-                color={"color": "#1e1e2e", "highlight": "#7F77DD"},
-                width=min(1 + edata["weight"] * 0.4, 3),
-                title=f"Shared files: {', '.join(edata['files'][:3])}",
-                arrows={"to": {"enabled": True, "scaleFactor": 0.5}}
-            )
-
-        legend_html = "".join([
-            f'<span style="display:inline-flex;align-items:center;gap:5px;margin-right:12px;">'
-            f'<span style="width:10px;height:10px;border-radius:50%;background:{author_color[a]};display:inline-block;"></span>'
-            f'<span style="font-size:11px;color:#888;">{a.split()[0]} ({author_counts[a]})</span></span>'
-            for a in sorted_authors[:8]
-        ])
-
-        net.save_graph(output_path)
-        with open(output_path, "r", encoding="utf-8") as f:
-            html = f.read()
-
-        injection = f"""
-        <div style="position:fixed;top:12px;left:50%;transform:translateX(-50%);
-                    background:#111115;border:1px solid #1e1e24;border-radius:8px;
-                    padding:8px 16px;z-index:999;display:flex;align-items:center;
-                    gap:4px;flex-wrap:wrap;max-width:90vw;box-shadow:0 4px 20px rgba(0,0,0,0.5);">
-            <span style="font-size:11px;color:#444;margin-right:8px;font-weight:600;">Authors</span>
-            {legend_html}
-        </div>
-        <div style="position:fixed;bottom:12px;left:50%;transform:translateX(-50%);
-                    background:#111115;border:1px solid #1e1e24;border-radius:6px;
-                    padding:6px 14px;z-index:999;">
-            <span style="font-size:11px;color:#444;">
-                Arrow = time direction &nbsp;·&nbsp; Color = author &nbsp;·&nbsp; Hover node for details
-            </span>
-        </div>"""
-        html = html.replace("</body>", injection + "</body>")
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(html)
-
-    def _author_color(self, author):
-        colors = ["#1D9E75","#E24B4A","#7F77DD","#378ADD","#D85A30","#BA7517","#D4537E"]
-        return colors[hash(author) % len(colors)]

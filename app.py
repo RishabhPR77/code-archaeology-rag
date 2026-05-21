@@ -575,15 +575,18 @@ elif page == "timeline":
 # ---------------------------------------------------------------
 # Page: Graph
 # ---------------------------------------------------------------
+# ---------------------------------------------------------------
+# Page: Graph -> Timeline & Log
+# ---------------------------------------------------------------
 elif page == "graph":
-    st.markdown('<div class="page-title">Graph Explorer</div>', unsafe_allow_html=True)
-    st.markdown('<div class="page-sub">Trace every commit from past to future — who built what and when.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="page-title">Commit Explorer</div>', unsafe_allow_html=True)
+    st.markdown('<div class="page-sub">View the visual timeline or search the raw commit log.</div>', unsafe_allow_html=True)
 
     if not active_key:
         st.warning("No repository ingested yet.")
         st.stop()
 
-    tab1, tab2 = st.tabs(["Timeline Swimlane", "Commit DAG"])
+    tab1, tab2 = st.tabs(["Timeline Swimlane", "Commit Log"])
 
     with tab1:
         st.markdown("One row per author. Commits flow **left → right** in time. Color = commit type. Hover any node for full commit details.")
@@ -599,19 +602,42 @@ elif page == "graph":
             with open(graph_path, "r", encoding="utf-8") as f:
                 st.components.v1.html(f.read(), height=880, scrolling=True)
 
+    # --- NEW: Searchable Table ---
     with tab2:
-        st.markdown("Each node = one commit. **Arrow direction = time** (older → newer). Color = author. Hover for commit details. Drag to explore.")
-        if st.button("Generate Commit DAG", key="gen_dag_graph"):
-            cg          = CommitGraph(chunks_path=active_chunks_path)
-            output_path = f"./data/{active_key}_dag_graph.html"
-            with st.spinner("Building commit graph..."):
-                cg.visualize(output_path=output_path)
-            st.session_state[f"dag_graph_{active_key}"] = output_path
-
-        graph_path = st.session_state.get(f"dag_graph_{active_key}")
-        if graph_path and Path(graph_path).exists():
-            with open(graph_path, "r", encoding="utf-8") as f:
-                st.components.v1.html(f.read(), height=820, scrolling=False)
+        st.markdown("Searchable history of all commits. Filter by message, author, or file.")
+        
+        search_query = st.text_input("Search commits", placeholder="e.g., 'fix', 'app.py', or 'Sujal'", label_visibility="collapsed")
+        
+        # Load the raw chunks directly to build the table
+        if active_chunks_path and Path(active_chunks_path).exists():
+            with open(active_chunks_path, "r") as f:
+                chunks = json.load(f)
+                
+            # Flatten the JSON into a clean list of dictionaries
+            rows = []
+            for c in chunks:
+                meta = c["metadata"]
+                msg = c["text"].split("\n")[0].replace("COMMIT: ", "")
+                rows.append({
+                    "Date": meta["timestamp"][:10],
+                    "Author": meta["author"],
+                    "Message": msg,
+                    "Files": meta["files"],
+                    "SHA": meta["sha"][:7]
+                })
+                
+            df = pd.DataFrame(rows).sort_values("Date", ascending=False)
+            
+            # Apply search filter if the user typed something
+            if search_query:
+                q = search_query.lower()
+                df = df[
+                    df["Message"].str.lower().str.contains(q) |
+                    df["Author"].str.lower().str.contains(q) |
+                    df["Files"].str.lower().str.contains(q)
+                ]
+                
+            st.dataframe(df, use_container_width=True, hide_index=True)
 
 # ---------------------------------------------------------------
 # Page: Hot Files
