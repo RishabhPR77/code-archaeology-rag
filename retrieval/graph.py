@@ -263,3 +263,251 @@ class CommitGraph:
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
         print(f"Graph data saved to {path}")
+        
+    # ------------------------------------------------------------------
+    # Visualization A — File-centric graph
+    # ------------------------------------------------------------------
+    def visualize_files(
+        self,
+        output_path: str = "./data/file_graph.html",
+        min_cochange: int = 2
+    ):
+        pair_counts = defaultdict(int)
+        file_change_counts = defaultdict(int)
+
+        for chunk in self.chunks:
+            files = [f.strip() for f in chunk["metadata"]["files"].split(", ") if f.strip()]
+            for f in files:
+                file_change_counts[f] += 1
+            for i in range(len(files)):
+                for j in range(i + 1, len(files)):
+                    pair = tuple(sorted([files[i], files[j]]))
+                    pair_counts[pair] += 1
+
+        strong_pairs = {
+            pair: count for pair, count in pair_counts.items()
+            if count >= min_cochange
+        }
+
+        if not strong_pairs:
+            print("No co-change pairs found above threshold.")
+            return
+
+        files_in_graph = set()
+        for f1, f2 in strong_pairs:
+            files_in_graph.add(f1)
+            files_in_graph.add(f2)
+
+        net = Network(
+            height="750px",
+            width="100%",
+            directed=False,
+            bgcolor="#0d0d0f",
+            font_color="#e8e6e0"
+        )
+        net.barnes_hut(gravity=-3000, spring_length=180, spring_strength=0.05)
+
+        def file_color(filename):
+            ext = filename.rsplit(".", 1)[-1] if "." in filename else "other"
+            color_map = {
+                "py":   "#7F77DD",
+                "js":   "#BA7517",
+                "jsx":  "#D85A30",
+                "ts":   "#378ADD",
+                "tsx":  "#1D9E75",
+                "rst":  "#888780",
+                "yaml": "#D4537E",
+                "yml":  "#D4537E",
+                "toml": "#639922",
+                "json": "#E24B4A",
+                "md":   "#555",
+                "css":  "#4A90D9",
+            }
+            return color_map.get(ext, "#666")
+
+        max_changes = max(file_change_counts.values()) if file_change_counts else 1
+        for filename in files_in_graph:
+            count = file_change_counts.get(filename, 1)
+            size  = 10 + (count / max_changes) * 30
+            label = filename.split("/")[-1]
+            title = (
+                f"<b>{filename}</b><br>"
+                f"Changed {count}x total<br>"
+                f"Appears in {sum(1 for p in strong_pairs if filename in p)} co-change pairs"
+            )
+            net.add_node(
+                filename,
+                label=label,
+                title=title,
+                color=file_color(filename),
+                size=size,
+                font={"size": 11, "color": "#e8e6e0"}
+            )
+
+        max_cochange = max(strong_pairs.values()) if strong_pairs else 1
+        for (f1, f2), count in strong_pairs.items():
+            width = 1 + (count / max_cochange) * 8
+            net.add_edge(f1, f2, width=width, title=f"Co-changed {count}x together", color="#333344")
+
+        net.save_graph(output_path)
+        print(f"File graph saved to {output_path}")
+
+    # ------------------------------------------------------------------
+    # Visualization B — Timeline swimlane graph
+    # ------------------------------------------------------------------
+    def visualize_timeline(
+        self,
+        output_path: str = "./data/timeline_graph.html"
+    ):
+        sorted_chunks = sorted(
+            self.chunks,
+            key=lambda c: c["metadata"]["timestamp"]
+        )
+
+        author_counts = defaultdict(int)
+        for chunk in sorted_chunks:
+            author_counts[chunk["metadata"]["author"]] += 1
+        top_authors = [
+            a for a, _ in sorted(
+                author_counts.items(), key=lambda x: x[1], reverse=True
+            )[:8]
+        ]
+
+        author_y = {author: i * 120 for i, author in enumerate(top_authors)}
+
+        if not sorted_chunks:
+            return
+
+        t_min = datetime.fromisoformat(sorted_chunks[0]["metadata"]["timestamp"])
+        t_max = datetime.fromisoformat(sorted_chunks[-1]["metadata"]["timestamp"])
+        t_range = (t_max - t_min).total_seconds() or 1
+        canvas_width = 1400
+
+        def commit_type_color(message: str) -> str:
+            msg = message.lower()
+            if any(w in msg for w in ["fix", "bug", "patch", "hotfix", "error", "issue"]):
+                return "#E24B4A"
+            elif any(w in msg for w in ["add", "feat", "feature", "new", "implement", "create"]):
+                return "#1D9E75"
+            elif any(w in msg for w in ["refactor", "clean", "restructure", "reorganize", "move"]):
+                return "#7F77DD"
+            elif any(w in msg for w in ["chore", "update", "bump", "upgrade", "deps", "dependency", "version", "release", "merge"]):
+                return "#888780"
+            elif any(w in msg for w in ["doc", "readme", "comment", "docs"]):
+                return "#BA7517"
+            else:
+                return "#378ADD"
+
+        def commit_type_label(message: str) -> str:
+            msg = message.lower()
+            if any(w in msg for w in ["fix", "bug", "patch", "hotfix", "error", "issue"]):
+                return "bug fix"
+            elif any(w in msg for w in ["add", "feat", "feature", "new", "implement", "create"]):
+                return "feature"
+            elif any(w in msg for w in ["refactor", "clean", "restructure", "reorganize", "move"]):
+                return "refactor"
+            elif any(w in msg for w in ["chore", "update", "bump", "upgrade", "deps", "dependency", "version", "release", "merge"]):
+                return "chore"
+            elif any(w in msg for w in ["doc", "readme", "comment", "docs"]):
+                return "docs"
+            else:
+                return "other"
+
+        net = Network(
+            height="850px",
+            width="100%",
+            directed=True,
+            bgcolor="#0d0d0f",
+            font_color="#e8e6e0"
+        )
+        net.toggle_physics(False)
+
+        added_nodes = set()
+
+        for chunk in sorted_chunks:
+            author = chunk["metadata"]["author"]
+            if author not in author_y:
+                continue
+
+            t = datetime.fromisoformat(chunk["metadata"]["timestamp"])
+            x = int(((t - t_min).total_seconds() / t_range) * canvas_width)
+            y = author_y[author]
+
+            msg    = chunk["text"].split("\n")[0].replace("COMMIT: ", "")
+            color  = commit_type_color(msg)
+            c_type = commit_type_label(msg)
+
+            title = (
+                f"<b>{chunk['metadata']['sha']}</b><br>"
+                f"<b>Author:</b> {author}<br>"
+                f"<b>Date:</b> {chunk['metadata']['timestamp'][:10]}<br>"
+                f"<b>Type:</b> {c_type}<br>"
+                f"<b>Files:</b> {chunk['metadata']['files'][:80]}<br>"
+                f"<b>Message:</b> {msg[:100]}"
+            )
+
+            net.add_node(
+                chunk["id"],
+                label=chunk["metadata"]["sha"],
+                title=title,
+                color=color,
+                size=14,
+                x=x, y=y,
+                font={"size": 9, "color": "#888"}
+            )
+            added_nodes.add(chunk["id"])
+
+        author_commits = defaultdict(list)
+        for chunk in sorted_chunks:
+            if chunk["metadata"]["author"] in author_y:
+                author_commits[chunk["metadata"]["author"]].append(chunk["id"])
+
+        for author, commit_ids in author_commits.items():
+            for i in range(len(commit_ids) - 1):
+                src, tgt = commit_ids[i], commit_ids[i + 1]
+                if src in added_nodes and tgt in added_nodes:
+                    net.add_edge(src, tgt, color="#222233", width=1, arrows="to")
+
+        legend_items = [
+            ("bug fix",  "#E24B4A"),
+            ("feature",  "#1D9E75"),
+            ("refactor", "#7F77DD"),
+            ("chore",    "#888780"),
+            ("docs",     "#BA7517"),
+            ("other",    "#378ADD"),
+        ]
+        legend_html = "".join([
+            f'<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;">'
+            f'<span style="width:10px;height:10px;border-radius:50%;background:{c};display:inline-block;"></span>'
+            f'<span style="font-size:11px;color:#888;">{label}</span></span>'
+            for label, c in legend_items
+        ])
+
+        lane_html = "".join([
+            f'<div style="position:absolute;left:8px;top:{y + 50}px;'
+            f'font-family:monospace;font-size:11px;color:#555;">{author.split()[0]}</div>'
+            for author, y in author_y.items()
+        ])
+
+        net.save_graph(output_path)
+
+        with open(output_path, "r", encoding="utf-8") as f:
+            html = f.read()
+
+        injection = f"""
+        <div style="position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+                    background:#111115;border:1px solid #1e1e24;border-radius:8px;
+                    padding:10px 16px;z-index:999;display:flex;align-items:center;gap:4px;">
+            {legend_html}
+        </div>
+        <div style="position:fixed;left:0;top:0;width:130px;height:100%;
+                    background:rgba(13,13,15,0.7);pointer-events:none;z-index:998;">
+            {lane_html}
+        </div>
+        """
+        html = html.replace("</body>", injection + "</body>")
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(html)
+
+        print(f"Timeline graph saved to {output_path}")
