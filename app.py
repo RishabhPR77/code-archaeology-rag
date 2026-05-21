@@ -600,18 +600,18 @@ elif page == "graph":
                 st.components.v1.html(f.read(), height=880, scrolling=True)
 
     with tab2:
-        st.markdown("Each node = one commit. **Arrow direction = time** (older → newer). Color = author. Hover for commit details. Drag to explore.")
-        if st.button("Generate Commit DAG", key="gen_dag_graph"):
+        st.markdown("Full commit history — searchable and filterable by author, type, or keyword.")
+        if st.button("Generate Commit Log", key="gen_dag_graph"):
             cg          = CommitGraph(chunks_path=active_chunks_path)
-            output_path = f"./data/{active_key}_dag_graph.html"
-            with st.spinner("Building commit graph..."):
-                cg.visualize(output_path=output_path)
+            output_path = f"./data/{active_key}_commit_log.html"
+            with st.spinner("Building commit log..."):
+                cg.visualize_commit_log(output_path=output_path)
             st.session_state[f"dag_graph_{active_key}"] = output_path
 
         graph_path = st.session_state.get(f"dag_graph_{active_key}")
         if graph_path and Path(graph_path).exists():
             with open(graph_path, "r", encoding="utf-8") as f:
-                st.components.v1.html(f.read(), height=820, scrolling=False)
+                st.components.v1.html(f.read(), height=820, scrolling=True)
 
 # ---------------------------------------------------------------
 # Page: Hot Files
