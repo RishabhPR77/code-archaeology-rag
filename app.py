@@ -17,6 +17,13 @@ from storage.vector_store import VectorStore
 from retrieval.graph import CommitGraph
 from query.engine import ask, timeline_ask
 
+from utils.rate_limiter import (
+    can_ingest, record_ingestion,
+    can_query, record_query,
+    get_usage_display
+)
+
+
 # ---------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------
@@ -420,14 +427,19 @@ if page == "ingest":
         if not repo_url:
             st.warning("Please enter a GitHub URL.")
         else:
-            try:
-                with st.status("Ingesting...", expanded=True):
-                    key = ingest_repo(repo_url.strip(), max_commits)
-                    st.session_state.active_key = key
-                st.success("Done. Select Ask from the nav to start querying.")
-                st.balloons()
-            except Exception as e:
-                st.error(f"Failed: {e}")
+            allowed, msg = can_ingest(max_commits)
+            if not allowed:
+                st.error(msg)
+            else:    
+                try:
+                    with st.status("Ingesting...", expanded=True):
+                        key = ingest_repo(repo_url.strip(), max_commits)
+                        st.session_state.active_key = key
+                    record_ingestion(max_commits)
+                    st.success("Done. Select Ask from the nav to start querying.")
+                    st.balloons()
+                except Exception as e:
+                    st.error(f"Failed: {e}")
 
     if registry:
         st.divider()
@@ -549,6 +561,11 @@ elif page == "ask":
     if ask_clicked and question:
         st.session_state.ask_question = ""
 
+        allowed, msg = can_query()
+        if not allowed:
+            st.warning(msg)
+            st.stop()
+
         mode_prompt = {
             "Detailed":       "",
             "Quick summary":  " Answer in 2-3 sentences only.",
@@ -561,13 +578,16 @@ elif page == "ask":
         with st.spinner("Searching commits and generating answer..."):
             result = ask(full_question, top_k=8, filters=filters, collection_name=active_key)
 
-        # Save to history
+        record_query()   # record after success
+
+        usage = get_usage_display()
+        st.caption(f"{usage['queries_left']} free questions remaining today. Resets at midnight.")
+
         st.session_state.ask_history.insert(0, {
             "question": question,
             "answer":   result["answer"],
             "mode":     mode,
         })
-        # Keep last 10
         st.session_state.ask_history = st.session_state.ask_history[:10]
 
     # ── Show history ─────────────────────────────────────────────
