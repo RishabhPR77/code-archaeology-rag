@@ -188,9 +188,3 @@ Most RAG projects are "chat with your PDF." This project is different because:
 The data source is live Git history - something every real software company has. The system retrieves developer **intent** not just file content. It solves a pain point every developer feels immediately - staring at old code with no context. And it combines semantic search, keyword matching, and temporal graph analysis in a single pipeline rather than relying on any one technique alone.
 
 ---
-
-## Built By
-
-**Rishabh Patidar** - B.Tech Information Technology, MITS Gwalior
-
-[LinkedIn](https://linkedin.com/in/rishabh-ptdr) &nbsp;·&nbsp; [GitHub](https://github.com/RishabhPR77)

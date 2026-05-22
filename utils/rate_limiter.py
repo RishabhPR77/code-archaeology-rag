@@ -82,7 +82,7 @@ def can_ingest(commit_count: int) -> tuple[bool, str]:
     if record["repos_ingested"] >= LIMITS["max_repos"]:
         return False, (
             f"You have already ingested a repository from this device. "
-            f"The free demo allows 1 repository per user.\n\n{CONTACT_MSG}"
+            f"The free demo allows 2 repository per user.\n\n{CONTACT_MSG}"
         )
 
     if commit_count > LIMITS["max_commits"]:
