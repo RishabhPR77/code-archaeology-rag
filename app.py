@@ -24,6 +24,18 @@ from utils.rate_limiter import (
     get_usage_display
 )
 
+def is_admin() -> bool:
+    """Returns True if user has entered the admin password this session."""
+    return st.session_state.get("is_admin", False)
+
+def _check_limits(commit_count=None):
+    """Returns (allowed, msg). Bypasses limits for admin."""
+    if is_admin():
+        return True, ""
+    if commit_count is not None:
+        return can_ingest(commit_count)
+    return can_query()
+
 
 # ---------------------------------------------------------------
 # Page config
@@ -386,9 +398,20 @@ page_keys   = [k for k, _ in pages]
 page_labels = {k: l for k, l in pages}
 current_idx = page_keys.index(st.session_state.page) if st.session_state.page in page_keys else 0
 
-logo_col, radio_col = st.columns([2, 6])
+logo_col, radio_col, admin_col = st.columns([2, 6, 1])
 with logo_col:
     st.markdown('<div class="nav-logo">code-archaeologist</div>', unsafe_allow_html=True)
+with admin_col:
+    if not is_admin():
+        pw = st.text_input("", placeholder="admin", type="password",
+                           label_visibility="collapsed", key="admin_pw_input")
+        if pw:
+            if pw == os.getenv("ADMIN_PASSWORD", ""):
+                st.session_state.is_admin = True
+                st.rerun()
+    else:
+        st.markdown('<div style="font-size:11px;color:#1D9E75;padding-top:6px;">✓ admin</div>',
+                    unsafe_allow_html=True)
 with radio_col:
     selected_page = st.radio(
         "nav",
@@ -436,7 +459,7 @@ if page == "ingest":
         if not repo_url:
             st.warning("Please enter a GitHub URL.")
         else:
-            allowed, msg = can_ingest(max_commits)
+            allowed, msg = _check_limits(max_commits)
             if not allowed:
                 st.error(msg)
             else:    
@@ -570,7 +593,7 @@ elif page == "ask":
     if ask_clicked and question:
         st.session_state.ask_question = ""
 
-        allowed, msg = can_query()
+        allowed, msg = _check_limits()
         if not allowed:
             st.warning(msg)
             st.stop()
