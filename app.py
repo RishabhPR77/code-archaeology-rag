@@ -13,6 +13,7 @@ from pathlib import Path
 
 from ingestion.git_loader import load_commits
 from ingestion.chunker import build_chunks
+from ingestion.github_enricher import fetch_prs
 from storage.vector_store import VectorStore
 from retrieval.graph import CommitGraph
 from query.engine import ask, timeline_ask
@@ -324,13 +325,21 @@ def ingest_repo(repo_url: str, max_commits: int) -> str:
     st.write(f"Extracting {max_commits} commits...")
     commits = load_commits(clone_path, max_count=max_commits)
 
-    chunks = build_chunks(commits, pull_requests=[])
+    repo_name = repo_url.replace("https://github.com/", "").rstrip("/")
+    st.write("Fetching pull requests and review comments...")
+    try:
+        prs = fetch_prs(repo_name, max_prs=200)
+    except Exception as e:
+        st.write(f"PR fetch skipped: {e}")
+        prs = []
+
+    chunks = build_chunks(commits, pull_requests=prs)
 
     Path("./data/raw").mkdir(parents=True, exist_ok=True)
     with open(chunks_path, "w") as f:
         json.dump(chunks, f, indent=2)
 
-    st.write("Embedding and storing in ChromaDB...")
+    st.write("Embedding and storing in Pinecone...")
     store = VectorStore(collection_name=key)
     store.ingest(chunks)
 
