@@ -23,8 +23,12 @@ def run_ingestion():
 
     commits = load_commits(CLONE_PATH, max_count=300)
 
-    # Skip PRs for now — use empty list
-    prs = []
+    print("Fetching pull requests...")
+    try:
+        prs = fetch_prs(REPO_NAME, max_prs=200)
+    except Exception as e:
+        print(f"PR fetch failed: {e} — continuing without PR data")
+        prs = []
 
     chunks = build_chunks(commits, prs)
 
@@ -36,21 +40,16 @@ def run_ingestion():
     store = VectorStore()
     store.ingest(chunks)
     print("Ingestion complete!")
-    
-    
+
+
 def run_query(question: str):
     from query.engine import ask
-
     print(f"\nSearching commits for: {question}")
-    print("Generating answer...\n")
-
     result = ask(question)
-
     print("=" * 60)
     print("ANSWER")
     print("=" * 60)
     print(result["answer"])
-
     print("\n" + "=" * 60)
     print("SOURCES USED")
     print("=" * 60)
@@ -59,7 +58,7 @@ def run_query(question: str):
         print(f"    Files:  {source['files'][:80]}")
         print(f"    Score:  {source['score']}")
         print(f"    Has PR: {source['has_pr']}")
-        
+
 
 if __name__ == "__main__":
     import sys
@@ -69,7 +68,6 @@ if __name__ == "__main__":
         run_query(" ".join(sys.argv[2:]))
 
     elif cmd == "timeline":
-        # python main.py timeline sessions.py
         from query.engine import timeline_ask
         filename = sys.argv[2] if len(sys.argv) > 2 else "sessions.py"
         result = timeline_ask(filename)
@@ -81,17 +79,7 @@ if __name__ == "__main__":
         for entry in result["timeline"]:
             print(f"  {entry['timestamp'][:10]} — {entry['author']:<20} {entry['message'][:60]}")
 
-    elif cmd == "graph":
-        # python main.py graph
-        # python main.py graph sessions.py   (filtered)
-        from retrieval.graph import CommitGraph
-        graph = CommitGraph()
-        filter_file = sys.argv[2] if len(sys.argv) > 2 else None
-        graph.visualize(filter_file=filter_file)
-        graph.save_graph_data()
-
     elif cmd == "hotfiles":
-        # python main.py hotfiles
         from retrieval.graph import CommitGraph
         graph = CommitGraph()
         print("\nMost frequently changed files:\n")
@@ -99,7 +87,6 @@ if __name__ == "__main__":
             print(f"  {item['change_count']:>3}x  {item['file']}")
 
     elif cmd == "cochange":
-        # python main.py cochange
         from retrieval.graph import CommitGraph
         graph = CommitGraph()
         print("\nFiles that change together most often:\n")
@@ -108,7 +95,6 @@ if __name__ == "__main__":
             print(f"         {item['files'][1]}")
 
     elif cmd == "authors":
-        # python main.py authors
         from retrieval.graph import CommitGraph
         graph = CommitGraph()
         print("\nAuthor analysis:\n")
