@@ -1,15 +1,35 @@
-from dataclasses import asdict
+# ingestion/chunker.py
 
 def build_chunks(commits, pull_requests) -> list[dict]:
+    # Primary match: merge_commit_sha → PR
     sha_to_pr = {
         pr.merge_commit_sha: pr
         for pr in pull_requests
         if pr.merge_commit_sha
     }
 
+    # Fallback match: PR title keywords → commit message
+    # Handles squash-merge where SHA doesn't match
+    def find_pr_by_message(commit_msg: str, commit_sha: str):
+        msg_lower = commit_msg.lower().strip()
+        for pr in pull_requests:
+            # Skip already matched by SHA
+            if pr.merge_commit_sha == commit_sha:
+                continue
+            pr_title_lower = pr.title.lower().strip()
+            # Match if PR title words appear in commit message
+            pr_words = [w for w in pr_title_lower.split() if len(w) > 3]
+            if pr_words and sum(1 for w in pr_words if w in msg_lower) >= max(1, len(pr_words) // 2):
+                return pr
+            # Match merge commit messages like "Merge pull request #N"
+            if f"#{pr.number}" in commit_msg:
+                return pr
+        return None
+
     chunks = []
     for commit in commits:
-        pr   = sha_to_pr.get(commit.sha)
+        # Try SHA match first, then fuzzy title match
+        pr = sha_to_pr.get(commit.sha) or find_pr_by_message(commit.message, commit.sha)
         text = _build_text(commit, pr)
 
         chunks.append({
@@ -29,17 +49,12 @@ def build_chunks(commits, pull_requests) -> list[dict]:
             }
         })
 
-    print(f"Built {len(chunks)} chunks")
+    matched = sum(1 for c in chunks if c["metadata"]["has_pr"])
+    print(f"Built {len(chunks)} chunks — {matched} linked to PRs")
     return chunks
 
 
 def _build_text(commit, pr=None) -> str:
-    """
-    Richer text per commit for better embedding + BM25 retrieval.
-    Structure: intent summary first (most important for semantic search),
-    then supporting context (files, diff, PR).
-    """
-    # Classify intent from message keywords for extra signal
     msg   = commit.message.strip()
     label = _classify(msg)
 
@@ -51,9 +66,8 @@ def _build_text(commit, pr=None) -> str:
         f"LINES: +{commit.insertions} / -{commit.deletions}",
     ]
 
-    # PR context is gold for intent - add it before diff
     if pr:
-        parts.append(f"PR #{pr.number}: {pr.title}")
+        parts.append(f"PR #{pr.number} by {pr.author}: {pr.title}")
         if pr.body and pr.body.strip():
             parts.append(f"PR DESCRIPTION: {pr.body[:1200]}")
         if pr.labels:
@@ -67,7 +81,6 @@ def _build_text(commit, pr=None) -> str:
                 f"  - {s[:300]}" for s in pr.review_summaries[:3]
             ))
 
-    # Diff last - noisy but useful for keyword/BM25 matches
     if commit.diff:
         parts.append(f"DIFF:\n{commit.diff[:3000]}")
 
