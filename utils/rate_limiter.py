@@ -1,16 +1,17 @@
-import json
+# utils/rate_limiter.py
 import os
-from datetime import datetime, date
-from pathlib import Path
+import json
+from datetime import date
+import urllib.request
+import urllib.parse
 
-USAGE_FILE = "./data/usage.json"
-LINKEDIN   = "https://linkedin.com/in/rishabh-ptdr"
-EMAIL      = "rishabhpatidar400@gmail.com"
+LINKEDIN  = "https://linkedin.com/in/rishabh-ptdr"
+EMAIL     = "rishabhpatidar400@gmail.com"
 
 LIMITS = {
-    "max_commits":  100,
-    "max_repos":    2,
-    "max_queries":  5,
+    "max_commits": 100,
+    "max_repos":   2,
+    "max_queries": 5,
 }
 
 CONTACT_MSG = (
@@ -19,26 +20,29 @@ CONTACT_MSG = (
     f"Reach out on [LinkedIn]({LINKEDIN}) or at {EMAIL}"
 )
 
-
-def _load() -> dict:
-    if Path(USAGE_FILE).exists():
-        with open(USAGE_FILE) as f:
-            return json.load(f)
-    return {}
-
-
-def _save(data: dict):
-    Path("./data").mkdir(exist_ok=True)
-    with open(USAGE_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+# ── Upstash Redis REST client (no extra library needed) ────────────
+def _redis(method: str, *args):
+    url   = os.getenv("UPSTASH_REDIS_REST_URL", "").rstrip("/")
+    token = os.getenv("UPSTASH_REDIS_REST_TOKEN", "")
+    if not url or not token:
+        return None
+    endpoint = url + "/" + "/".join(urllib.parse.quote(str(a), safe="") for a in [method, *args])
+    req = urllib.request.Request(
+        endpoint,
+        headers={"Authorization": f"Bearer {token}"},
+        method="GET"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            return json.loads(resp.read()).get("result")
+    except Exception:
+        return None
 
 
 def _get_ip() -> str:
-    """Get visitor IP from Streamlit headers."""
     try:
         import streamlit as st
         headers = st.context.headers
-        # Streamlit Cloud puts real IP in X-Forwarded-For
         ip = headers.get("X-Forwarded-For", "").split(",")[0].strip()
         if not ip:
             ip = headers.get("X-Real-Ip", "unknown")
@@ -47,42 +51,46 @@ def _get_ip() -> str:
         return "unknown"
 
 
-def _record(ip: str) -> dict:
-    """Get or create usage record for this IP."""
-    data   = _load()
-    today  = str(date.today())
-    if ip not in data:
-        data[ip] = {
-            "commits_ingested": 0,
-            "repos_ingested":   0,
-            "queries_today":    0,
-            "query_date":       today,
-            "first_seen":       datetime.now().isoformat(),
-        }
-    # Reset daily query count if it's a new day
-    if data[ip]["query_date"] != today:
-        data[ip]["queries_today"] = 0
-        data[ip]["query_date"]    = today
-    return data, ip
+def _key(ip: str, field: str) -> str:
+    safe = ip.replace(":", "_").replace(".", "_")
+    return f"ca:{safe}:{field}"
 
 
-# ------------------------------------------------------------------
-# Public interface
-# ------------------------------------------------------------------
+def _get_int(ip: str, field: str) -> int:
+    val = _redis("GET", _key(ip, field))
+    try:
+        return int(val) if val is not None else 0
+    except Exception:
+        return 0
+
+
+def _incr(ip: str, field: str):
+    _redis("INCR", _key(ip, field))
+
+
+def _get_query_date(ip: str) -> str:
+    val = _redis("GET", _key(ip, "query_date"))
+    return val or ""
+
+
+def _set_query_date(ip: str, d: str):
+    _redis("SET", _key(ip, "query_date"), d)
+
+
+def _reset_queries(ip: str):
+    _redis("SET", _key(ip, "queries_today"), 0)
+
+
+# ── Public interface ───────────────────────────────────────────────
 
 def can_ingest(commit_count: int) -> tuple[bool, str]:
-    """
-    Returns (allowed, message).
-    Checks both repo limit and commit limit for this IP.
-    """
-    ip       = _get_ip()
-    data, ip = _record(ip)
-    record   = data[ip]
+    ip = _get_ip()
 
-    if record["repos_ingested"] >= LIMITS["max_repos"]:
+    repos = _get_int(ip, "repos_ingested")
+    if repos >= LIMITS["max_repos"]:
         return False, (
-            f"You have already ingested a repository from this device. "
-            f"The free demo allows 2 repository per user.\n\n{CONTACT_MSG}"
+            f"You have already ingested {repos} repositories from this device. "
+            f"The free demo allows {LIMITS['max_repos']} per user.\n\n{CONTACT_MSG}"
         )
 
     if commit_count > LIMITS["max_commits"]:
@@ -95,24 +103,23 @@ def can_ingest(commit_count: int) -> tuple[bool, str]:
 
 
 def record_ingestion(commit_count: int):
-    """Call this after successful ingestion."""
-    ip       = _get_ip()
-    data, ip = _record(ip)
-    data[ip]["commits_ingested"] += commit_count
-    data[ip]["repos_ingested"]   += 1
-    _save(data)
+    ip = _get_ip()
+    _incr(ip, "repos_ingested")
+    _redis("INCRBY", _key(ip, "commits_ingested"), commit_count)
 
 
 def can_query() -> tuple[bool, str]:
-    """
-    Returns (allowed, message).
-    Checks daily query limit for this IP.
-    """
-    ip       = _get_ip()
-    data, ip = _record(ip)
-    record   = data[ip]
+    ip    = _get_ip()
+    today = str(date.today())
 
-    if record["queries_today"] >= LIMITS["max_queries"]:
+    # Reset daily count if new day
+    stored_date = _get_query_date(ip)
+    if stored_date != today:
+        _reset_queries(ip)
+        _set_query_date(ip, today)
+
+    queries = _get_int(ip, "queries_today")
+    if queries >= LIMITS["max_queries"]:
         return False, (
             f"You have used all {LIMITS['max_queries']} free questions for today. "
             f"Limits reset at midnight.\n\n{CONTACT_MSG}"
@@ -122,21 +129,27 @@ def can_query() -> tuple[bool, str]:
 
 
 def record_query():
-    """Call this after a successful query."""
-    ip       = _get_ip()
-    data, ip = _record(ip)
-    data[ip]["queries_today"] += 1
-    _save(data)
+    ip    = _get_ip()
+    today = str(date.today())
+    stored_date = _get_query_date(ip)
+    if stored_date != today:
+        _reset_queries(ip)
+        _set_query_date(ip, today)
+    _incr(ip, "queries_today")
 
 
 def get_usage_display() -> dict:
-    """Returns current IP's usage stats for display in the UI."""
-    ip       = _get_ip()
-    data, ip = _record(ip)
-    r        = data[ip]
+    ip    = _get_ip()
+    today = str(date.today())
+    stored_date = _get_query_date(ip)
+    if stored_date != today:
+        queries = 0
+    else:
+        queries = _get_int(ip, "queries_today")
+    repos = _get_int(ip, "repos_ingested")
     return {
-        "queries_used":     r["queries_today"],
-        "queries_left":     max(0, LIMITS["max_queries"] - r["queries_today"]),
-        "repos_used":       r["repos_ingested"],
-        "can_ingest_more":  r["repos_ingested"] < LIMITS["max_repos"],
+        "queries_used":    queries,
+        "queries_left":    max(0, LIMITS["max_queries"] - queries),
+        "repos_used":      repos,
+        "can_ingest_more": repos < LIMITS["max_repos"],
     }
