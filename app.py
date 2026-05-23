@@ -451,9 +451,9 @@ if page == "ingest":
     with col1:
         repo_url = st.text_input("GitHub URL", placeholder="https://github.com/pallets/flask", label_visibility="collapsed")
     with col2:
-        max_commits = st.selectbox("Commits", [50, 100, 150, 200], index=3, label_visibility="collapsed")
+        max_commits = st.selectbox("Commits", [50, 100], index=1, label_visibility="collapsed")
 
-    st.caption("50 commits ~ 2min   |   200 commits ~ 6min   |   Free demo limit: 200 commits")
+    st.caption("50 commits ~ 2min   |   100 commits ~ 4min   |   Free demo limit: 100 commits")
 
     if st.button("Ingest Repository"):
         if not repo_url:
