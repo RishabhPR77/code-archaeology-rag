@@ -26,7 +26,13 @@ from utils.rate_limiter import (
 
 def is_admin() -> bool:
     """Returns True if user has entered the admin password this session."""
-    return st.session_state.get("is_admin", False)
+    # Check session state first, then query params
+    if st.session_state.get("is_admin", False):
+        return True
+    if st.query_params.get("admin") == os.getenv("ADMIN_PASSWORD", ""):
+        st.session_state.is_admin = True
+        return True
+    return False
 
 def _check_limits(commit_count=None):
     """Returns (allowed, msg). Bypasses limits for admin."""
@@ -355,15 +361,16 @@ def ingest_repo(repo_url: str, max_commits: int) -> str:
     store = VectorStore(collection_name=key)
     store.ingest(chunks)
 
-    registry = load_registry()
-    registry[key] = {
+    # Save to session state registry (per-user, not shared)
+    if "registry" not in st.session_state:
+        st.session_state.registry = {}
+    st.session_state.registry[key] = {
         "url":         repo_url,
         "key":         key,
         "chunks_path": chunks_path,
         "clone_path":  clone_path,
         "commits":     len(chunks)
     }
-    save_registry(registry)
     return key
 
 # ---------------------------------------------------------------
@@ -372,9 +379,12 @@ def ingest_repo(repo_url: str, max_commits: int) -> str:
 if "page" not in st.session_state:
     st.session_state.page = "ingest"
 
-registry    = load_registry()
-repo_keys   = list(registry.keys())
-repo_urls   = [registry[k]["url"] for k in repo_keys]
+# Registry is per-session — not shared across users
+if "registry" not in st.session_state:
+    st.session_state.registry = {}
+
+registry  = st.session_state.registry
+repo_keys = list(registry.keys())
 
 if "active_key" not in st.session_state:
     st.session_state.active_key = repo_keys[0] if repo_keys else None
@@ -409,6 +419,7 @@ with admin_col:
         if pw:
             if pw == os.getenv("ADMIN_PASSWORD", ""):
                 st.session_state.is_admin = True
+                st.query_params["admin"] = pw
                 st.rerun()
     else:
         st.markdown('<div style="font-size:11px;color:#1D9E75;padding-top:6px;">✓ admin</div>',
@@ -519,7 +530,7 @@ if page == "ingest":
                             if chunks_path and Path(chunks_path).exists():
                                 Path(chunks_path).unlink(missing_ok=True)
                             registry.pop(k)
-                            save_registry(registry)
+                            st.session_state.registry = registry
                             if st.session_state.active_key == k:
                                 remaining = list(registry.keys())
                                 st.session_state.active_key = remaining[0] if remaining else None
@@ -857,6 +868,7 @@ elif page == "prs":
         )
     }
 
+    all_pr_html = ""
     for pr_num in sorted(pr_map.keys(), reverse=True):
         pr    = pr_map[pr_num]
         color = AUTHOR_COLORS.get(pr["author"], "#888")
@@ -867,23 +879,6 @@ elif page == "prs":
                 if lbl:
                     labels_html += f'<span style="background:#1a1a24;border:1px solid #2a2a34;border-radius:20px;padding:2px 8px;font-size:10px;color:#888;margin-left:6px;">{lbl}</span>'
 
-        st.markdown(f"""
-        <div style="background:#111115;border:1px solid #1e1e24;border-radius:10px;
-                    padding:14px 18px;margin-bottom:10px;display:flex;
-                    align-items:center;justify-content:space-between;">
-            <div style="display:flex;align-items:center;gap:12px;">
-                <span style="color:#7F77DD;font-family:monospace;font-size:13px;font-weight:600;">#{pr_num}</span>
-                <span style="color:#e8e6e0;font-size:14px;font-weight:500;">{pr['title']}</span>
-                {labels_html}
-            </div>
-            <div style="display:flex;align-items:center;gap:16px;flex-shrink:0;">
-                <span style="display:inline-flex;align-items:center;gap:6px;">
-                    <span style="width:8px;height:8px;border-radius:50%;background:{color};display:inline-block;"></span>
-                    <span style="font-size:12px;color:#666;">{pr['author']}</span>
-                </span>
-                <span style="font-family:monospace;font-size:11px;color:#444;">{pr['date']}</span>
-                <span style="background:#1D9E7522;color:#1D9E75;padding:3px 10px;border-radius:20px;
-                             font-size:10px;font-weight:700;letter-spacing:.05em;">MERGED</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        all_pr_html += f"""<div style="background:#111115;border:1px solid #1e1e24;border-radius:10px;padding:14px 18px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;"><div style="display:flex;align-items:center;gap:12px;"><span style="color:#7F77DD;font-family:monospace;font-size:13px;font-weight:600;">#{pr_num}</span><span style="color:#e8e6e0;font-size:14px;font-weight:500;">{pr['title']}</span>{labels_html}</div><div style="display:flex;align-items:center;gap:16px;flex-shrink:0;"><span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;border-radius:50%;background:{color};display:inline-block;"></span><span style="font-size:12px;color:#666;">{pr['author']}</span></span><span style="font-family:monospace;font-size:11px;color:#444;">{pr['date']}</span><span style="background:#1D9E7522;color:#1D9E75;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:.05em;">MERGED</span></div></div>"""
+
+    st.markdown(all_pr_html, unsafe_allow_html=True)
