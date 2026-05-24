@@ -24,6 +24,55 @@ from utils.rate_limiter import (
     get_usage_display
 )
 
+# ---------------------------------------------------------------
+# Auto cleanup — delete Pinecone namespaces after TTL expires
+# ---------------------------------------------------------------
+import urllib.request
+import urllib.parse
+
+TTL_SECONDS = 3 * 60 * 60  # 3 hours
+
+def _redis(method: str, *args):
+    url   = os.getenv("UPSTASH_REDIS_REST_URL", "").rstrip("/")
+    token = os.getenv("UPSTASH_REDIS_REST_TOKEN", "")
+    if not url or not token:
+        return None
+    endpoint = url + "/" + "/".join(urllib.parse.quote(str(a), safe="") for a in [method, *args])
+    req = urllib.request.Request(endpoint, headers={"Authorization": f"Bearer {token}"}, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            return json.loads(resp.read()).get("result")
+    except Exception:
+        return None
+
+def register_namespace_for_cleanup(namespace: str):
+    """Store namespace in Redis with TTL so it gets cleaned up later."""
+    _redis("SET", f"ca:ns:{namespace}", "1")
+    _redis("EXPIRE", f"ca:ns:{namespace}", TTL_SECONDS)
+
+def run_cleanup():
+    """On app load — scan for expired namespaces and delete from Pinecone."""
+    try:
+        result = _redis("KEYS", "ca:ns:*")
+        if not result:
+            return
+        # Any key still in Redis is still alive — we track what WAS registered
+        # via a separate permanent set, then diff against live keys
+        all_registered = _redis("SMEMBERS", "ca:ns:all") or []
+        live = set(result)
+        live_ns = {k.replace("ca:ns:", "") for k in live}
+        for ns in all_registered:
+            if ns not in live_ns:
+                # TTL expired — delete from Pinecone
+                try:
+                    vs = VectorStore(collection_name=ns)
+                    vs.delete_namespace()
+                    _redis("SREM", "ca:ns:all", ns)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
 def is_admin() -> bool:
     """Returns True if user has entered the admin password this session."""
     # Check session state first, then query params
@@ -371,6 +420,9 @@ def ingest_repo(repo_url: str, max_commits: int) -> str:
         "clone_path":  clone_path,
         "commits":     len(chunks)
     }
+    # Register for auto cleanup after TTL expires
+    register_namespace_for_cleanup(key)
+    _redis("SADD", "ca:ns:all", key)
     return key
 
 # ---------------------------------------------------------------
@@ -378,6 +430,7 @@ def ingest_repo(repo_url: str, max_commits: int) -> str:
 # ---------------------------------------------------------------
 if "page" not in st.session_state:
     st.session_state.page = "ingest"
+    run_cleanup()  # clean up expired namespaces on fresh session
 
 # Registry is per-session — not shared across users
 if "registry" not in st.session_state:
