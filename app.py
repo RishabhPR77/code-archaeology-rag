@@ -392,6 +392,7 @@ pages = [
     ("hotfiles", "Hot Files"),
     ("cochange", "Co-Change"),
     ("authors",  "Authors"),
+    ("prs",      "Pull Requests"),
 ]
 
 page_keys   = [k for k, _ in pages]
@@ -779,3 +780,110 @@ elif page == "authors":
             with st.expander(f"{author_data['author']} - {author_data['commits']} commits"):
                 for f in author_data["top_files"]:
                     st.markdown(f"`{f['file']}` - {f['changes']}x")
+# ---------------------------------------------------------------
+# Page: Pull Requests
+# ---------------------------------------------------------------
+elif page == "prs":
+    st.markdown('<div class="page-title">Pull Requests</div>', unsafe_allow_html=True)
+    st.markdown('<div class="page-sub">All pull requests found in this repository.</div>', unsafe_allow_html=True)
+
+    if not active_key:
+        st.warning("No repository ingested yet.")
+        st.stop()
+
+    # Read PR data from chunks
+    import json as _json
+    try:
+        with open(active_chunks_path) as f:
+            all_chunks = _json.load(f)
+    except Exception:
+        st.warning("Chunk data not found. Please re-ingest the repository.")
+        st.stop()
+
+    # Collect unique PRs
+    pr_map = {}
+    for chunk in all_chunks:
+        meta = chunk.get("metadata", {})
+        if meta.get("has_pr") and meta.get("pr_number", 0) > 0:
+            pr_num = meta["pr_number"]
+            if pr_num not in pr_map:
+                # Extract PR title and author from chunk text
+                text = chunk.get("text", "")
+                pr_title = ""
+                pr_author = ""
+                for line in text.split("\n"):
+                    if line.startswith("PR #"):
+                        parts = line.split(":", 1)
+                        if len(parts) > 1:
+                            pr_title = parts[1].strip()
+                        # Extract author from "PR #N by Author: title"
+                        by_part = line.split(" by ")
+                        if len(by_part) > 1:
+                            pr_author = by_part[1].split(":")[0].strip()
+                        break
+                pr_map[pr_num] = {
+                    "number":  pr_num,
+                    "title":   pr_title or "No title",
+                    "author":  pr_author or meta.get("author", ""),
+                    "date":    meta.get("timestamp", "")[:10],
+                    "labels":  meta.get("pr_labels", ""),
+                    "files":   meta.get("files", ""),
+                }
+
+    if not pr_map:
+        st.info("No pull requests found. Make sure you ingested with PR fetching enabled.")
+        st.stop()
+
+    # Stats row
+    total_prs = len(pr_map)
+    authors   = list(set(v["author"] for v in pr_map.values() if v["author"]))
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown(f'<div class="stat-card"><div class="stat-label">Total PRs</div><div class="stat-value">{total_prs}</div></div>', unsafe_allow_html=True)
+    with col2:
+        st.markdown(f'<div class="stat-card"><div class="stat-label">Contributors</div><div class="stat-value">{len(authors)}</div></div>', unsafe_allow_html=True)
+    with col3:
+        dates = sorted([v["date"] for v in pr_map.values() if v["date"]])
+        date_range = f"{dates[0]} → {dates[-1]}" if dates else "N/A"
+        st.markdown(f'<div class="stat-card"><div class="stat-label">Date Range</div><div class="stat-value" style="font-size:1rem">{date_range}</div></div>', unsafe_allow_html=True)
+
+    st.markdown("<div style='margin-top:1.5rem'></div>", unsafe_allow_html=True)
+
+    # PR list — sorted by PR number descending (newest first)
+    AUTHOR_COLORS = {
+        a: c for a, c in zip(
+            authors,
+            ["#7F77DD", "#1D9E75", "#E24B4A", "#378ADD", "#D85A30", "#BA7517", "#D4537E"]
+        )
+    }
+
+    for pr_num in sorted(pr_map.keys(), reverse=True):
+        pr    = pr_map[pr_num]
+        color = AUTHOR_COLORS.get(pr["author"], "#888")
+        labels_html = ""
+        if pr["labels"]:
+            for lbl in pr["labels"].split(","):
+                lbl = lbl.strip()
+                if lbl:
+                    labels_html += f'<span style="background:#1a1a24;border:1px solid #2a2a34;border-radius:20px;padding:2px 8px;font-size:10px;color:#888;margin-left:6px;">{lbl}</span>'
+
+        st.markdown(f"""
+        <div style="background:#111115;border:1px solid #1e1e24;border-radius:10px;
+                    padding:14px 18px;margin-bottom:10px;display:flex;
+                    align-items:center;justify-content:space-between;">
+            <div style="display:flex;align-items:center;gap:12px;">
+                <span style="color:#7F77DD;font-family:monospace;font-size:13px;font-weight:600;">#{pr_num}</span>
+                <span style="color:#e8e6e0;font-size:14px;font-weight:500;">{pr['title']}</span>
+                {labels_html}
+            </div>
+            <div style="display:flex;align-items:center;gap:16px;flex-shrink:0;">
+                <span style="display:inline-flex;align-items:center;gap:6px;">
+                    <span style="width:8px;height:8px;border-radius:50%;background:{color};display:inline-block;"></span>
+                    <span style="font-size:12px;color:#666;">{pr['author']}</span>
+                </span>
+                <span style="font-family:monospace;font-size:11px;color:#444;">{pr['date']}</span>
+                <span style="background:#1D9E7522;color:#1D9E75;padding:3px 10px;border-radius:20px;
+                             font-size:10px;font-weight:700;letter-spacing:.05em;">MERGED</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
