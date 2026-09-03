@@ -25,7 +25,7 @@ Paste a public GitHub URL. The system ingests the commit history, embeds it into
 - *"Which files are most tightly coupled?"*
 - *"How did sessions.py evolve over the last two years?"*
 
-It retrieves real commits as evidence and uses LLaMA-3.3-70B to synthesize a grounded, cited answer - not a guess.
+It retrieves real commits as evidence and uses GPT-OSS-20B to synthesize a grounded, cited answer - not a guess.
 
 ---
 
@@ -71,7 +71,7 @@ Git history extraction          GitHub API (PRs, reviews)
                     ↓
            Hybrid search (dense 60% + BM25 40%)
                     ↓
-            query/engine.py - Groq + LLaMA-3.3-70B
+            query/engine.py - Groq + GPT-OSS-20B
                     ↓
             retrieval/graph.py - NetworkX knowledge graph
                     ↓
@@ -90,7 +90,7 @@ Git history extraction          GitHub API (PRs, reviews)
 | Vector DB | Pinecone | Cloud-hosted, per-repo namespaces, production-ready |
 | Hybrid search | BM25 (rank-bm25) | Handles exact identifiers that semantic search misses |
 | Knowledge graph | NetworkX | File-level temporal linking across commits |
-| LLM | LLaMA-3.3-70B via Groq | Fast inference, excellent reasoning, free tier |
+| LLM | GPT-OSS-20B via Groq | Fast inference, excellent reasoning, free tier |
 | UI | Streamlit | Entire stack is Python, no separate API layer needed |
 
 ---
@@ -108,7 +108,7 @@ Chunks are embedded using `BAAI/bge-small-en-v1.5` with BGE's query prefix for b
 At query time the system fetches the top candidates from Pinecone (dense retrieval), then re-ranks them using BM25 (keyword matching), combining both scores at 60/40 weight. This means searches for exact function names and file paths work just as well as conceptual questions.
 
 ### 3. RAG Query Engine
-Retrieved chunks are injected into a structured prompt that tells LLaMA to answer only from the provided evidence, cite specific commits, and clearly state when there is not enough information. Temperature is set at 0.15 for factual, grounded responses.
+Retrieved chunks are injected into a structured prompt that tells Qwen to answer only from the provided evidence, cite specific commits, and clearly state when there is not enough information. Temperature is set at 0.15 for factual, grounded responses.
 
 ### 4. Knowledge Graph
 A directed NetworkX graph connects commits that touched the same files, with time flowing forward. This powers the four analysis pages - file timeline, co-change analysis, author breakdown, and hot files - without any additional API calls.

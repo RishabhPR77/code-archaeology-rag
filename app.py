@@ -13,7 +13,7 @@ from pathlib import Path
 
 from ingestion.git_loader import load_commits
 from ingestion.chunker import build_chunks
-from ingestion.github_enricher import fetch_prs
+from ingestion.github_enricher import fetch_prs, FetchResult
 from storage.vector_store import VectorStore
 from retrieval.graph import CommitGraph
 from query.engine import ask, timeline_ask
@@ -394,11 +394,14 @@ def ingest_repo(repo_url: str, max_commits: int) -> str:
 
     repo_name = repo_url.replace("https://github.com/", "").rstrip("/")
     st.write("Fetching pull requests and review comments...")
+    prs = []
     try:
-        prs = fetch_prs(repo_name, max_prs=200)
+        fetch_result = fetch_prs(repo_name, max_prs=200)
+        prs = fetch_result.prs
+        for w in fetch_result.warnings:
+            st.warning(w)
     except Exception as e:
-        st.write(f"PR fetch skipped: {e}")
-        prs = []
+        st.warning(f"PR fetch failed: {e}. Continuing without PR data.")
 
     chunks = build_chunks(commits, pull_requests=prs)
 
@@ -895,7 +898,33 @@ elif page == "prs":
                 }
 
     if not pr_map:
-        st.info("No pull requests found. Make sure you ingested with PR fetching enabled.")
+        st.warning("No pull requests found for this repository.")
+        if st.button("Fetch Pull Requests Now"):
+            with st.status("Fetching pull requests...", expanded=True):
+                repo_url = registry[active_key]["url"]
+                repo_name = repo_url.replace("https://github.com/", "").rstrip("/")
+                st.write(f"Querying GitHub API for merged PRs...")
+                fetch_result = fetch_prs(repo_name, max_prs=200)
+                for w in fetch_result.warnings:
+                    st.warning(w)
+
+                prs = fetch_result.prs
+                st.write(f"Fetched {len(prs)} PRs. Rebuilding chunks...")
+
+                clone_path = registry[active_key]["clone_path"]
+                commits = load_commits(clone_path, max_count=300)
+                chunks = build_chunks(commits, pull_requests=prs)
+
+                st.write("Saving updated chunks...")
+                with open(active_chunks_path, "w") as f:
+                    json.dump(chunks, f, indent=2)
+
+                st.write("Updating Pinecone index...")
+                store = VectorStore(collection_name=active_key)
+                store.ingest(chunks)
+
+            st.success(f"Done. {len(prs)} PRs fetched. Reloading page...")
+            st.rerun()
         st.stop()
 
     # Stats row

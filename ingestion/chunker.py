@@ -12,19 +12,36 @@ def build_chunks(commits, pull_requests) -> list[dict]:
     # Handles squash-merge where SHA doesn't match
     def find_pr_by_message(commit_msg: str, commit_sha: str):
         msg_lower = commit_msg.lower().strip()
+        best_match = None
+        best_score = 0
         for pr in pull_requests:
-            # Skip already matched by SHA
             if pr.merge_commit_sha == commit_sha:
                 continue
+            score = 0
+
+            # Title word matching — require at least 2 significant words
             pr_title_lower = pr.title.lower().strip()
-            # Match if PR title words appear in commit message
             pr_words = [w for w in pr_title_lower.split() if len(w) > 3]
-            if pr_words and sum(1 for w in pr_words if w in msg_lower) >= max(1, len(pr_words) // 2):
-                return pr
-            # Match merge commit messages like "Merge pull request #N"
+            if len(pr_words) >= 2:
+                matches = sum(1 for w in pr_words if w in msg_lower)
+                if matches >= 2:
+                    score = matches
+
+            # Merge commit patterns like "Merge pull request #N" or "(#123)"
             if f"#{pr.number}" in commit_msg:
-                return pr
-        return None
+                score = max(score, 10)
+            if f"(#{pr.number})" in commit_msg:
+                score = max(score, 10)
+
+            # Author name match as tiebreaker
+            if pr.author and pr.author.lower() in msg_lower:
+                score = max(score, 1)
+
+            if score > best_score:
+                best_score = score
+                best_match = pr
+
+        return best_match if best_score >= 2 else None
 
     chunks = []
     for commit in commits:

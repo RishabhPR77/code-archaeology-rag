@@ -24,11 +24,14 @@ def run_ingestion():
     commits = load_commits(CLONE_PATH, max_count=300)
 
     print("Fetching pull requests...")
+    prs = []
     try:
-        prs = fetch_prs(REPO_NAME, max_prs=200)
+        fetch_result = fetch_prs(REPO_NAME, max_prs=200)
+        prs = fetch_result.prs
+        for w in fetch_result.warnings:
+            print(f"WARNING: {w}")
     except Exception as e:
         print(f"PR fetch failed: {e} — continuing without PR data")
-        prs = []
 
     chunks = build_chunks(commits, prs)
 
