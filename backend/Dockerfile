@@ -12,9 +12,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends git \
 WORKDIR /app
 
 # CPU-only torch keeps the image ~2GB smaller than the default CUDA build
-COPY requirements.txt .
+COPY requirements.txt requirements-local.txt ./
 RUN pip install --index-url https://download.pytorch.org/whl/cpu "torch==2.9.1" \
-    && pip install -r requirements.txt
+    && pip install -r requirements-local.txt
 
 # Bake the embedding model into the image so the first ingest doesn't download it
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-en-v1.5')"

@@ -85,7 +85,7 @@ flowchart LR
       API --> DB[(PostgreSQL / SQLite<br/>users, encrypted keys,<br/>repos, chunks, answers)]
       API --> JOB[Ingest worker<br/>background task]
       JOB --> GH[(GitHub<br/>clone + PR API)]
-      JOB --> EMB[BGE-small embeddings<br/>local CPU]
+      JOB --> EMB[Embeddings<br/>BGE-small locally or<br/>Pinecone hosted]
       EMB --> VEC[(Pinecone<br/>one namespace per repo)]
       API --> VEC
       API --> LLM[[User's LLM provider<br/>Anthropic · OpenAI · Gemini · Groq · OpenRouter]]
@@ -99,7 +99,7 @@ flowchart LR
 2. **Extract.** For each commit: SHA, message, author, date, files, line counts and the diff (truncated on line boundaries).
 3. **Enrich.** Merged PRs within the commit window are fetched along with their descriptions, labels, review comments and review summaries. They are linked to commits by merge SHA, with a fuzzy fallback for squash merges.
 4. **Chunk.** One chunk per commit. The text combines a classified intent (`BUG FIX`, `FEATURE`, `REFACTOR`, ...), the metadata, the PR context and the diff.
-5. **Embed and index.** `BAAI/bge-small-en-v1.5` embeddings are stored in a namespace unique to that repository and user.
+5. **Embed and index.** Chunks are embedded with `BAAI/bge-small-en-v1.5` in-process, or with Pinecone's hosted `llama-text-embed-v2` in production, and stored in a namespace unique to that repository and user.
 
 **Answering:**
 
@@ -119,7 +119,7 @@ The analytics pages (overview, hot files, co-change, authors, PRs, commits) are 
 | Secrets | Fernet (AES-128-CBC + HMAC) encryption of users' API keys at rest |
 | Database | PostgreSQL in production, SQLite for local development |
 | Git and GitHub | GitPython, PyGithub |
-| Retrieval | sentence-transformers (BGE-small), Pinecone serverless, rank-bm25 |
+| Retrieval | Pinecone serverless and hosted embeddings, or sentence-transformers (BGE-small) locally; rank-bm25 |
 | LLM SDKs | `anthropic`, `openai` (also used for Groq and OpenRouter), `google-genai` |
 | Delivery | Docker, nginx, docker compose |
 
@@ -196,10 +196,12 @@ All settings are environment variables, read from `backend/.env`. See [`backend/
 | `SECRET_KEY` | *required* | Signs session tokens (at least 32 characters) |
 | `ENCRYPTION_KEY` | *required* | Fernet key that encrypts users' API keys. **Changing it makes saved keys unreadable.** |
 | `ENVIRONMENT` | `development` | `production` enables Secure cookies and hides `/api/docs` |
-| `FRONTEND_URL` | `http://localhost:5173` | Public URL of the app, used for OAuth redirects and CORS |
+| `FRONTEND_URL` | Render's URL, else `http://localhost:5173` | Public URL of the app, used for OAuth redirects and CORS |
 | `DATABASE_URL` | SQLite in `backend/data/` | For example `postgresql+psycopg://user:pass@host:5432/db` |
 | `PINECONE_API_KEY` | *empty* | Empty means the local vector store |
-| `PINECONE_INDEX` | `code-archaeologist` | Created automatically (384-dim, cosine) |
+| `PINECONE_INDEX` | `code-archaeologist` | Created automatically with the right dimension for the embedding provider |
+| `EMBEDDING_PROVIDER` | `local` | `local` runs BGE-small in-process (about 550 MB RAM; install `requirements-local.txt`). `pinecone` uses Pinecone's hosted embeddings and needs `PINECONE_API_KEY`. |
+| `EMBEDDING_MODEL` | `llama-text-embed-v2` | Hosted embedding model, used when `EMBEDDING_PROVIDER=pinecone` |
 | `GITHUB_TOKEN` | *empty* | Raises the GitHub API limit for PR fetching. Users who sign in with GitHub use their own token. |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | *empty* | Enable **Sign in with GitHub** |
 | `ADMIN_EMAILS` | *empty* | Comma-separated accounts that bypass usage limits |
@@ -221,41 +223,39 @@ The app requests the `read:user user:email` scopes. A GitHub account with a veri
 
 ## Deployment
 
-### Free: Hugging Face Spaces + Neon + Pinecone
+### Free: Render + Neon + Pinecone
 
-The root [`Dockerfile`](Dockerfile) builds a single container in which FastAPI serves both the API and the React app on port 7860. That matches what a Hugging Face Docker Space expects. The free CPU Basic hardware (2 vCPU, 16 GB RAM) runs the local embedding model comfortably; the API needs roughly 0.6 to 0.9 GB, which rules out 512 MB free tiers.
+The root [`Dockerfile`](Dockerfile) builds one slim container in which FastAPI serves both the API and the React app. It sets `EMBEDDING_PROVIDER=pinecone`, so embeddings come from Pinecone's hosted `llama-text-embed-v2` model instead of a local model. With no PyTorch in the image, the API fits Render's free 512 MB instance. Everything that must survive restarts lives outside the container: **Neon** (free Postgres) for data and **Pinecone** for vectors.
 
-A Space's disk is wiped on every restart, so state lives elsewhere: **Neon** (free Postgres) for the database and **Pinecone** for vectors.
+| Piece | Free tier |
+|---|---|
+| [Render](https://render.com/docs/free) web service | 512 MB RAM and 0.1 CPU; sleeps after 15 idle minutes and takes about a minute to wake |
+| [Neon](https://neon.com/pricing) Postgres | 0.5 GB storage; scales to zero when idle |
+| [Pinecone](https://www.pinecone.io/pricing/) Starter | vector storage plus 5M hosted embedding tokens per month (one 100-commit ingest is roughly 150k tokens) |
 
-1. **Database.** Create a free project at [neon.com](https://neon.com) and copy its connection string (`postgresql://…?sslmode=require`). The app converts it to the psycopg driver automatically.
-2. **Space.** On Hugging Face, choose **New → Space**, name it (for example `code-archaeologist`), pick the **Docker** SDK and **Blank** template, and keep **CPU Basic (free)** hardware.
-3. **Secrets.** In the Space's **Settings → Variables and secrets**, add:
+1. **Neon.** Create a project, click **Connect**, turn connection pooling off and copy the `postgresql://…` string.
+2. **Push this repository to GitHub**, since Render deploys from it.
+3. **Render.** Sign up at [render.com](https://render.com) with GitHub, then choose **New → Blueprint** and pick this repository. Render reads [`render.yaml`](render.yaml) and asks once for five values. Paste them from your `backend/.env`:
+   - `SECRET_KEY`
+   - `ENCRYPTION_KEY`
+   - `DATABASE_URL` (the Neon string)
+   - `PINECONE_API_KEY`
+   - `GITHUB_TOKEN`
 
-   | Name | Type | Value |
-   |---|---|---|
-   | `SECRET_KEY` | Secret | output of `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
-   | `ENCRYPTION_KEY` | Secret | output of `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
-   | `DATABASE_URL` | Secret | the Neon connection string |
-   | `PINECONE_API_KEY` | Secret | your Pinecone key |
-   | `GITHUB_TOKEN` | Secret | a GitHub token with no scopes (public data only) |
-   | `ENVIRONMENT` | Variable | `production` |
-   | `FRONTEND_URL` | Variable | `https://<username>-<space-name>.hf.space` |
+   Click **Apply**. The first build takes about 5 to 10 minutes.
+4. **Open** `https://<service-name>.onrender.com`. `FRONTEND_URL` is filled in automatically from Render's `RENDER_EXTERNAL_URL`.
 
-4. **Deploy** from this repository, using the backend's Python environment (it already has `huggingface_hub`):
+Every push to `main` redeploys automatically. On first use the app creates the `code-archaeologist-llama` Pinecone index (1024 dimensions). It is separate from the 384-dimension index used by local embeddings, because the two kinds of vectors can't share an index.
+
+For **Sign in with GitHub**, use the callback `https://<service-name>.onrender.com/api/auth/github/callback` and add `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` in the service's **Environment** tab.
+
+### Hugging Face Spaces (needs PRO)
+
+Docker Spaces now require a [PRO](https://huggingface.co/pro) subscription. With one, deploy the same image with [`deploy/huggingface/deploy.py`](deploy/huggingface/deploy.py). It creates the Space, saves the secrets from `backend/.env` after confirming the names, and uploads an allowlist of source files. Run it with `--dry-run` first:
 
 ```bash
-backend/.venv/Scripts/python deploy/huggingface/deploy.py <username>/<space-name>
+backend/.venv/Scripts/python deploy/huggingface/deploy.py <username>/<space-name> --dry-run
 ```
-
-On macOS or Linux, the interpreter is `backend/.venv/bin/python`. The first run asks for a Hugging Face token with **write** access, which you create at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens).
-
-The script uploads only an allowlist of source files, so `.env` files and local data never leave your machine. The Space then builds, which takes about 10 minutes the first time.
-
-5. **Open the app** at `https://<username>-<space-name>.hf.space`. On the huggingface.co Space page the app runs inside a frame, where browsers won't keep the login cookie, so the app shows a link to open it in its own tab.
-
-For **Sign in with GitHub**, create an OAuth app whose callback is `https://<username>-<space-name>.hf.space/api/auth/github/callback` and add `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` as secrets.
-
-Free Spaces sleep after 48 hours without visitors and take a short while to wake. Re-run the deploy script whenever you want to ship changes.
 
 ### Self-hosted: docker compose
 
@@ -344,7 +344,7 @@ code-archaeology-rag/
 │   │   ├── routers/             # auth, providers, repos
 │   │   └── services/            # ingest jobs, RAG prompts, usage limits
 │   ├── ingestion/               # git_loader, github_enricher, chunker
-│   ├── storage/vector_store.py  # BGE embeddings, Pinecone or local store, hybrid search
+│   ├── storage/vector_store.py  # local or hosted embeddings, Pinecone or local store, hybrid search
 │   ├── retrieval/analytics.py   # hot files, co-change, authors, PRs, timelines
 │   ├── tests/
 │   └── Dockerfile

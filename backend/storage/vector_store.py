@@ -6,16 +6,35 @@ from pathlib import Path
 
 from rank_bm25 import BM25Okapi
 
-PINECONE_INDEX = "code-archaeologist"
+from app.config import get_settings
+
+# Local embeddings: BGE-small in-process (needs torch + sentence-transformers)
 EMBEDDING_DIM  = 384
 EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 # BGE query prefix - boosts retrieval accuracy for question-type queries
 BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
+
+# Hosted embeddings: Pinecone Inference (llama-text-embed-v2 takes 2048-token inputs,
+# up to 96 per request, and truncates the end of longer ones)
+HOSTED_DIM = 1024
+HOSTED_BATCH = 48
+HOSTED_RETRIES = 6
+
 # Pinecone allows 40KB of metadata per vector; this keeps most diffs within reach of the LLM
 METADATA_TEXT_CHARS = 4000
 
 _model = None
 _model_lock = threading.Lock()
+_pc = None
+_pc_lock = threading.Lock()
+
+
+def _hosted() -> bool:
+    return get_settings().embedding_provider == "pinecone"
+
+
+def embedding_dim() -> int:
+    return HOSTED_DIM if _hosted() else EMBEDDING_DIM
 
 
 def _get_model():
@@ -28,7 +47,35 @@ def _get_model():
         return _model
 
 
+def _pinecone():
+    global _pc
+    with _pc_lock:
+        if _pc is None:
+            from pinecone import Pinecone
+            _pc = Pinecone(api_key=get_settings().pinecone_api_key)
+        return _pc
+
+
+def _hosted_embed(texts: list[str], input_type: str) -> list:
+    from pinecone.exceptions import PineconeApiException
+    for attempt in range(HOSTED_RETRIES):
+        try:
+            res = _pinecone().inference.embed(
+                model=get_settings().embedding_model,
+                inputs=texts,
+                parameters={"input_type": input_type, "truncate": "END", "dimension": HOSTED_DIM},
+            )
+            return [list(e["values"]) for e in res]
+        except PineconeApiException as e:
+            # Starter plan has a tokens-per-minute cap; back off and retry
+            if getattr(e, "status", None) != 429 or attempt == HOSTED_RETRIES - 1:
+                raise
+            time.sleep(min(60, 5 * 2 ** attempt))
+
+
 def _embed_query(text: str) -> list:
+    if _hosted():
+        return _hosted_embed([text[:8000]], "query")[0]
     return _get_model().encode(
         BGE_QUERY_PREFIX + text[:512],
         normalize_embeddings=True
@@ -36,6 +83,11 @@ def _embed_query(text: str) -> list:
 
 
 def _embed_docs(texts: list[str]) -> list:
+    if _hosted():
+        out = []
+        for i in range(0, len(texts), HOSTED_BATCH):
+            out.extend(_hosted_embed(texts[i:i + HOSTED_BATCH], "passage"))
+        return out
     return _get_model().encode(
         texts,
         normalize_embeddings=True,
@@ -46,18 +98,25 @@ def _embed_docs(texts: list[str]) -> list:
 
 # ── Backends ───────────────────────────────────────────────────────
 class _PineconeBackend:
-    def __init__(self, api_key: str, index_name: str):
-        from pinecone import Pinecone, ServerlessSpec
-        pc = Pinecone(api_key=api_key)
+    def __init__(self, index_name: str):
+        from pinecone import ServerlessSpec
+        pc = _pinecone()
+        dim = embedding_dim()
         if index_name not in [i.name for i in pc.list_indexes()]:
             pc.create_index(
                 name=index_name,
-                dimension=EMBEDDING_DIM,
+                dimension=dim,
                 metric="cosine",
                 spec=ServerlessSpec(cloud="aws", region="us-east-1")
             )
             while not pc.describe_index(index_name).status["ready"]:
                 time.sleep(1)
+        elif (existing := pc.describe_index(index_name).dimension) != dim:
+            # Vectors from different embedding models can't share an index
+            raise RuntimeError(
+                f"Pinecone index '{index_name}' holds {existing}-dim vectors but the "
+                f"'{get_settings().embedding_provider}' embeddings are {dim}-dim. "
+                "Set PINECONE_INDEX to a new index name.")
         self.index = pc.Index(index_name)
 
     def existing_ids(self, ids: list[str], namespace: str) -> set[str]:
@@ -132,10 +191,9 @@ def _get_backend():
     global _backend
     with _backend_lock:
         if _backend is None:
-            from app.config import get_settings
             settings = get_settings()
             if settings.pinecone_api_key:
-                _backend = _PineconeBackend(settings.pinecone_api_key, settings.pinecone_index)
+                _backend = _PineconeBackend(settings.pinecone_index)
             else:
                 _backend = _LocalBackend(settings.data_dir / "vectors")
         return _backend

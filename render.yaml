@@ -1,0 +1,37 @@
+# Render Blueprint: one free Docker web service (API + React app).
+# New -> Blueprint -> pick this repo. Render asks for each `sync: false` value once.
+# Database: Neon (free Postgres). Vectors and embeddings: Pinecone (free Starter).
+services:
+  - type: web
+    name: code-archaeologist
+    runtime: docker
+    plan: free
+    region: ohio            # closest Render region to Neon's us-east-2
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    envVars:
+      # Paste these from backend/.env when Render asks
+      - key: SECRET_KEY
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: PINECONE_API_KEY
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      # Fixed settings
+      - key: ENVIRONMENT
+        value: production
+      - key: PORT
+        value: "10000"
+      - key: EMBEDDING_PROVIDER
+        value: pinecone
+      - key: PINECONE_INDEX
+        value: code-archaeologist-llama   # 1024-dim index for hosted embeddings, created on first use
+      - key: MAX_CONCURRENT_INGESTS
+        value: "1"                        # keeps peak memory well inside 512 MB
+      # FRONTEND_URL is derived from RENDER_EXTERNAL_URL, which Render sets automatically

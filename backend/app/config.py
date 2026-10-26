@@ -3,7 +3,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Resolve paths from the backend folder so the API runs from any working directory
@@ -24,8 +24,10 @@ class Settings(BaseSettings):
     database_url: str = ""                        # empty -> SQLite file in data_dir
     static_dir: Path | None = None                # built React app to serve (single-container deploys)
 
-    # Where the React app lives — used for OAuth redirects and CORS
-    frontend_url: str = "http://localhost:5173"
+    # Where the React app lives — used for OAuth redirects and CORS.
+    # Empty -> Render's RENDER_EXTERNAL_URL if present, else the Vite dev server.
+    frontend_url: str = ""
+    render_external_url: str = ""                 # set by Render on every service
     cors_origins: str = ""                        # comma-separated extra origins
     session_ttl_hours: int = 24 * 7
 
@@ -33,6 +35,11 @@ class Settings(BaseSettings):
     pinecone_api_key: str = ""                    # empty -> local vector store (dev/tests)
     pinecone_index: str = "code-archaeologist"
     github_token: str = ""                        # fallback for PR fetching
+
+    # "local" runs BGE-small in-process (~550 MB RAM, needs torch);
+    # "pinecone" uses Pinecone's hosted embeddings so the API fits 512 MB hosts
+    embedding_provider: Literal["local", "pinecone"] = "local"
+    embedding_model: str = "llama-text-embed-v2"  # used when embedding_provider=pinecone
 
     # GitHub OAuth app — both empty disables "Sign in with GitHub"
     github_client_id: str = ""
@@ -45,6 +52,15 @@ class Settings(BaseSettings):
     max_ingests_per_day: int = 5
     repo_ttl_hours: int = 72                      # 0 keeps repos forever
     max_concurrent_ingests: int = 2
+
+    @model_validator(mode="after")
+    def _derive(self):
+        if not self.frontend_url:
+            self.frontend_url = self.render_external_url or "http://localhost:5173"
+        self.frontend_url = self.frontend_url.rstrip("/")
+        if self.embedding_provider == "pinecone" and not self.pinecone_api_key:
+            raise ValueError("EMBEDDING_PROVIDER=pinecone needs PINECONE_API_KEY")
+        return self
 
     @property
     def db_url(self) -> str:

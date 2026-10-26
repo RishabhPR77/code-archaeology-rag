@@ -4,7 +4,7 @@ emoji: 🏺
 colorFrom: purple
 colorTo: indigo
 sdk: docker
-app_port: 7860
+app_port: 10000
 pinned: false
 short_description: Ask why code was written, answered from its Git history
 ---

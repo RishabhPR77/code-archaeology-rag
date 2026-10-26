@@ -1,3 +1,6 @@
+# Core API — enough for production with EMBEDDING_PROVIDER=pinecone (fits 512 MB hosts).
+# For in-process embeddings (EMBEDDING_PROVIDER=local) also install requirements-local.txt.
+
 # API
 fastapi==0.162.0
 uvicorn[standard]==0.54.0
@@ -20,7 +23,5 @@ google-genai==2.33.0
 # Ingestion & retrieval
 GitPython==3.1.45
 PyGithub==2.9.1
-sentence-transformers==5.2.0
-torch==2.9.1
 pinecone==7.3.0
 rank-bm25==0.2.2
