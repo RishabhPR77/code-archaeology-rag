@@ -1,10 +1,11 @@
 import {
-  ArrowRight, BarChart3, FileClock, GitMerge, KeyRound, Network, Search, ShieldCheck, Sparkles, Users,
+  ArrowRight, BarChart3, FileClock, GitMerge, KeyRound, Network, PlayCircle, Search, ShieldCheck, Sparkles, Users,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 
-import { GitHubIcon, Logo, ProviderMark, ThemeToggle } from "../components/brand";
+import { Logo, ProviderMark, ThemeToggle } from "../components/brand";
+import { ProductDemo } from "../components/ProductDemo";
 import { Button } from "../components/ui";
 import { useMe } from "../lib/auth";
 import type { ProviderId } from "../lib/types";
@@ -26,44 +27,6 @@ const FEATURES: { icon: ReactNode; title: string; body: string }[] = [
 ];
 
 const PROVIDERS: ProviderId[] = ["anthropic", "openai", "gemini", "groq", "openrouter"];
-
-function ProductPreview() {
-  return (
-    <div className="relative mx-auto mt-16 max-w-4xl">
-      <div className="absolute -inset-x-10 -top-10 -bottom-4 rounded-[2rem] bg-accent/10 blur-3xl" aria-hidden />
-      <div className="relative overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl">
-        <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-          <span className="size-2.5 rounded-full bg-[#ff5f57]" />
-          <span className="size-2.5 rounded-full bg-[#febc2e]" />
-          <span className="size-2.5 rounded-full bg-[#28c840]" />
-          <span className="ml-3 font-mono text-xs text-subtle">acme/storefront · Ask</span>
-        </div>
-        <div className="space-y-4 p-5 sm:p-7">
-          <div className="ml-auto w-fit max-w-md rounded-2xl rounded-br-md bg-accent px-4 py-2.5 text-sm text-accent-fg">
-            Why was the checkout session logic refactored?
-          </div>
-          <div className="rounded-xl border border-border bg-surface-2 p-4 text-left text-[13px] leading-relaxed sm:p-5">
-            <div className="mb-3 flex items-center gap-2 text-xs text-subtle">
-              <ProviderMark id="anthropic" className="size-5 text-[8px]" />
-              <span className="font-mono">claude-sonnet-5-5</span>
-            </div>
-            <p>
-              The refactor in <code className="rounded bg-surface-3 px-1 font-mono text-accent">3f9c2a1</code> moved
-              token refresh out of <code className="rounded bg-surface-3 px-1 font-mono">CheckoutSession</code> after
-              two fix commits traced double charges to sessions expiring mid-payment. The PR review asked for the
-              retry path to be idempotent, which <code className="rounded bg-surface-3 px-1 font-mono text-accent">a81e0c4</code> added…
-            </p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {["3f9c2a1 · j.chen", "a81e0c4 · m.okafor", "PR #412"].map((s) => (
-                <span key={s} className="rounded-md border border-border bg-surface px-2 py-1 font-mono text-[11px] text-muted">{s}</span>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 export function Landing() {
   const { data: me } = useMe();
@@ -109,12 +72,14 @@ export function Landing() {
             <Link to={signedIn ? "/app" : "/register"}>
               <Button size="lg">{signedIn ? "Open your workspace" : "Start for free"} <ArrowRight className="size-4" /></Button>
             </Link>
-            <a href="https://github.com/RishabhPR77/code-archaeology-rag" target="_blank" rel="noopener noreferrer">
-              <Button size="lg" variant="outline"><GitHubIcon /> View on GitHub</Button>
+            <a href="#demo">
+              <Button size="lg" variant="outline"><PlayCircle className="size-4" /> See how it works</Button>
             </a>
           </div>
         </div>
-        <ProductPreview />
+        <div id="demo" className="mt-16 scroll-mt-24">
+          <ProductDemo />
+        </div>
       </section>
 
       <section id="features" className="border-t border-border bg-surface/50 px-4 py-24 sm:px-6">

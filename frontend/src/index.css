@@ -142,6 +142,13 @@
 
 @keyframes shimmer { 100% { transform: translateX(100%); } }
 
+/* Landing-page walkthrough cursor */
+@keyframes demo-ripple {
+  from { transform: scale(0.4); opacity: 0.9; }
+  to { transform: scale(1.6); opacity: 0; }
+}
+@keyframes demo-press { 50% { transform: scale(0.82); } }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
