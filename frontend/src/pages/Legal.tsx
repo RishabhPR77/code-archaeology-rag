@@ -1,0 +1,130 @@
+import type { ReactNode } from "react";
+import { Link } from "react-router";
+
+import { Logo, ThemeToggle } from "../components/brand";
+import { useAuthConfig } from "../lib/queries";
+
+const UPDATED = "October 26, 2026";
+
+function LegalPage({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="min-h-full">
+      <header className="flex items-center justify-between border-b border-border px-4 py-4 sm:px-8">
+        <Logo />
+        <ThemeToggle />
+      </header>
+      <main className="mx-auto max-w-2xl px-4 py-12 sm:px-6">
+        <h1 className="text-3xl font-semibold tracking-tight">{title}</h1>
+        <p className="mt-2 text-sm text-subtle">Last updated {UPDATED}</p>
+        <div className="prose-answer mt-8 [&_h2]:mt-8">{children}</div>
+        <p className="mt-12 text-sm text-muted">
+          <Link to="/" className="text-accent hover:underline">← Back to Code Archaeologist</Link>
+        </p>
+      </main>
+    </div>
+  );
+}
+
+function Contact() {
+  const { data } = useAuthConfig();
+  return data?.contact_email
+    ? <>email <a href={`mailto:${data.contact_email}`}>{data.contact_email}</a></>
+    : <>contact the operator of this site</>;
+}
+
+export function Privacy() {
+  return (
+    <LegalPage title="Privacy Policy">
+      <p>
+        Code Archaeologist helps you understand why code changed by answering questions about a
+        repository's history. This policy explains what we store, why, and for how long.
+      </p>
+
+      <h2>What we collect</h2>
+      <ul>
+        <li><strong>Account details:</strong> your email address and name, and your profile picture if you sign in with
+          Google or GitHub. Passwords are stored only as a bcrypt hash.</li>
+        <li><strong>Model provider API keys</strong> you add (Anthropic, OpenAI, Google Gemini, Groq or OpenRouter). They are
+          encrypted at rest and never shown back to you in full.</li>
+        <li><strong>GitHub access:</strong> if you connect GitHub, we store encrypted access tokens with read-only access to the
+          repositories you choose. You can disconnect in Settings and change access on GitHub at any time.</li>
+        <li><strong>Repository data</strong> for repositories you ingest: commit messages, authors, dates, changed file names,
+          truncated diffs, and pull request titles, descriptions and review comments.</li>
+        <li><strong>Your questions and the answers</strong> generated for them.</li>
+      </ul>
+
+      <h2>How we use it</h2>
+      <ul>
+        <li>To sign you in, verify your email address with a one-time code, and keep you signed in with a single
+          session cookie. We use no analytics or advertising cookies.</li>
+        <li>To answer your questions: relevant excerpts of a repository's history are sent, with your question, to the
+          model provider you selected, using your own API key. That provider's terms and privacy policy apply to
+          what it receives.</li>
+        <li>We do not sell your data or use it for advertising.</li>
+      </ul>
+
+      <h2>Services we rely on</h2>
+      <p>
+        Hosting (Render), database (Neon), vector search and embeddings (Pinecone), email delivery (Brevo), sign-in
+        (Google, GitHub) and the model provider you choose. These services process data on our behalf, mostly in
+        the United States.
+      </p>
+
+      <h2>How long we keep it</h2>
+      <ul>
+        <li>Ingested repositories, their indexed history and the questions about them are deleted automatically after
+          a limited time (72 hours by default), or immediately when you delete the repository.</li>
+        <li>Account details and saved API keys are kept until you remove them or ask us to delete your account.</li>
+      </ul>
+
+      <h2>Your choices</h2>
+      <p>
+        You can delete repositories, clear question history, remove API keys and disconnect GitHub from within the
+        app. To delete your account entirely or ask about your data, <Contact />.
+      </p>
+    </LegalPage>
+  );
+}
+
+export function Terms() {
+  return (
+    <LegalPage title="Terms of Service">
+      <p>By using Code Archaeologist you agree to these terms.</p>
+
+      <h2>The service</h2>
+      <p>
+        Code Archaeologist ingests Git repositories you point it at and answers questions about their history using a
+        large language model of your choice. It is provided free of charge, as is, and may change, be limited, or be
+        discontinued at any time.
+      </p>
+
+      <h2>Your responsibilities</h2>
+      <ul>
+        <li>Only ingest repositories you have the right to access and analyse.</li>
+        <li>You are responsible for your model provider API keys and any charges your provider bills for their use.</li>
+        <li>Don't misuse the service, attempt to access other users' data, or try to get around usage limits.</li>
+      </ul>
+
+      <h2>Answers</h2>
+      <p>
+        Answers are generated by AI from the repository data that was retrieved and can be incomplete or wrong. Check
+        the cited commits before relying on an answer.
+      </p>
+
+      <h2>Limits and availability</h2>
+      <p>
+        Free usage limits apply to repositories and ingests. Repositories are deleted automatically after a limited
+        time. There is no guarantee of uptime or that data will be preserved.
+      </p>
+
+      <h2>Liability</h2>
+      <p>
+        To the extent permitted by law, the service is provided without warranties of any kind, and its operators are not
+        liable for any loss arising from its use.
+      </p>
+
+      <h2>Contact</h2>
+      <p>For questions about these terms, <Contact />.</p>
+    </LegalPage>
+  );
+}

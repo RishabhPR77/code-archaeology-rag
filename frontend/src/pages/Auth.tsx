@@ -38,6 +38,10 @@ function AuthShell({ title, subtitle, children, footer }: {
           <p className="mt-1.5 text-sm text-muted">{subtitle}</p>
           <div className="mt-8">{children}</div>
           <p className="mt-8 text-center text-[13px] text-muted">{footer}</p>
+          <p className="mt-4 text-center text-xs text-subtle">
+            By continuing you agree to the <Link to="/terms" className="underline hover:text-text">Terms</Link> and{" "}
+            <Link to="/privacy" className="underline hover:text-text">Privacy Policy</Link>.
+          </p>
         </div>
       </main>
     </div>

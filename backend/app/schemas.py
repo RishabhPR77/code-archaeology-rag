@@ -75,6 +75,7 @@ class AuthConfigOut(BaseModel):
     github_enabled:     bool
     google_enabled:     bool
     email_verification: bool
+    contact_email:      str | None
 
 
 # ── GitHub ─────────────────────────────────────────────────────────

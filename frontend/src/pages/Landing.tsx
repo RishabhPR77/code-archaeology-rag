@@ -194,7 +194,11 @@ export function Landing() {
       <footer className="border-t border-border px-4 py-8 sm:px-6">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 text-xs text-subtle sm:flex-row">
           <Logo className="text-text" />
-          <p>Built with FastAPI, React and retrieval-augmented generation.</p>
+          <p className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+            <span>Built with FastAPI, React and retrieval-augmented generation.</span>
+            <Link to="/privacy" className="hover:text-text">Privacy</Link>
+            <Link to="/terms" className="hover:text-text">Terms</Link>
+          </p>
         </div>
       </footer>
     </div>

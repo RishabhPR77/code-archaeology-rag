@@ -53,7 +53,8 @@ def _claim_unverified(user: User):
 def auth_config():
     s = get_settings()
     return AuthConfigOut(github_enabled=s.github_oauth_enabled, google_enabled=s.google_oauth_enabled,
-                         email_verification=s.email_verification_enabled)
+                         email_verification=s.email_verification_enabled,
+                         contact_email=s.contact_email or None)
 
 
 # ── Email + password ───────────────────────────────────────────────

@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     brevo_api_key: str = ""
     email_from: str = ""                          # a sender address verified in Brevo
     email_from_name: str = "Code Archaeologist"
+    contact_email: str = ""                       # shown on the Privacy and Terms pages
 
     # Usage limits (admins bypass them)
     admin_emails: str = ""                        # comma-separated

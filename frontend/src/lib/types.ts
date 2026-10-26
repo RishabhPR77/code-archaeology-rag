@@ -58,6 +58,7 @@ export interface AuthConfig {
   github_enabled: boolean;
   google_enabled: boolean;
   email_verification: boolean;
+  contact_email: string | null;
 }
 
 export interface GitHubInstallation {

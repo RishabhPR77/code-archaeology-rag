@@ -5,6 +5,7 @@ import { Spinner } from "./components/ui";
 import { AppLayout } from "./layouts/AppLayout";
 import { useMe } from "./lib/auth";
 import { Landing } from "./pages/Landing";
+import { Privacy, Terms } from "./pages/Legal";
 import { Login, Register } from "./pages/Auth";
 import { NotFound } from "./pages/NotFound";
 
@@ -48,6 +49,8 @@ function GuestOnly({ children }: { children: ReactNode }) {
 
 export const router = createBrowserRouter([
   { path: "/", element: <Landing /> },
+  { path: "/privacy", element: <Privacy /> },
+  { path: "/terms", element: <Terms /> },
   { path: "/login", element: <GuestOnly><Login /></GuestOnly> },
   { path: "/register", element: <GuestOnly><Register /></GuestOnly> },
   { path: "/verify-email", element: <RequireUnverified><VerifyEmail /></RequireUnverified> },
