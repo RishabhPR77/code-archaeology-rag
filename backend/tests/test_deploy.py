@@ -25,6 +25,9 @@ def test_single_container_serves_spa(monkeypatch, tmp_path):
     from app.main import create_app
     with TestClient(create_app()) as c:
         assert c.get("/api/health").json() == {"status": "ok"}
+        assert c.head("/api/health").status_code == 200                 # uptime monitors use HEAD
+        assert c.head("/").status_code == 200
+        assert c.head("/app/repos/abc").status_code == 200
         assert c.get("/api/does-not-exist").status_code == 404          # API 404s stay JSON
         assert c.get("/assets/app.js").text == "console.log(1)"
         assert c.get("/favicon.svg").text == "<svg/>"

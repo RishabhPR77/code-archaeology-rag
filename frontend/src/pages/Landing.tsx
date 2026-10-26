@@ -72,7 +72,7 @@ export function Landing() {
   return (
     <div className="min-h-full overflow-x-hidden">
       <header className="sticky top-0 z-30 border-b border-border/60 bg-bg/75 backdrop-blur-md">
-        <div className="mx-auto flex h-16 max-w-6xl items-center gap-6 px-4 sm:px-6">
+        <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4 sm:gap-6 sm:px-6">
           <Logo />
           <nav className="hidden items-center gap-6 text-[13px] text-muted md:flex">
             <a href="#features" className="hover:text-text">Features</a>

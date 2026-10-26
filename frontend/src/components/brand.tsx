@@ -19,9 +19,11 @@ export function LogoMark({ className }: { className?: string }) {
 
 export function Logo({ to = "/", className }: { to?: string; className?: string }) {
   return (
-    <Link to={to} className={cn("flex items-center gap-2.5 font-semibold tracking-tight", className)}>
+    <Link to={to} aria-label="Code Archaeologist home"
+          className={cn("flex shrink-0 items-center gap-2.5 font-semibold tracking-tight", className)}>
       <LogoMark />
-      <span className="text-[15px]">Code Archaeologist</span>
+      {/* The mark alone carries the brand on the narrowest phones */}
+      <span className="whitespace-nowrap text-[15px] max-[400px]:hidden">Code Archaeologist</span>
     </Link>
   );
 }

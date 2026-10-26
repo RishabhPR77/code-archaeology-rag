@@ -52,7 +52,8 @@ def create_app() -> FastAPI:
     app.include_router(providers.router)
     app.include_router(repos.router)
 
-    @app.get("/api/health", tags=["meta"])
+    # HEAD too: uptime monitors (often used to keep free hosts awake) send HEAD by default
+    @app.api_route("/api/health", methods=["GET", "HEAD"], tags=["meta"])
     def health():
         return {"status": "ok"}
 
@@ -78,7 +79,7 @@ def _serve_frontend(app: FastAPI, static_dir: Path):
     # Hashed asset names, so they can be cached forever
     app.mount("/assets", StaticFiles(directory=root / "assets"), name="assets")
 
-    @app.get("/{path:path}", include_in_schema=False)
+    @app.api_route("/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
     def spa(path: str):
         if path.startswith("api/"):
             raise HTTPException(404, "Not found")
