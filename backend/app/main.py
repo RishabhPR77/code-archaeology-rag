@@ -13,10 +13,21 @@ from fastapi.staticfiles import StaticFiles
 from app.config import get_settings
 from app.db import init_db
 from app.routers import auth, github, providers, repos
-from app.services import ingest
+from app.services import ingest, mailer
 
 log = logging.getLogger(__name__)
 CLEANUP_INTERVAL = 15 * 60
+
+
+def _configure_logging():
+    """Uvicorn only sets up its own loggers; give the app's an INFO handler in the same style."""
+    app_log = logging.getLogger("app")
+    if not app_log.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)-9s %(name)s: %(message)s"))
+        app_log.addHandler(handler)
+        app_log.setLevel(logging.INFO)
+        app_log.propagate = False
 
 
 async def _cleanup_loop():
@@ -34,14 +45,22 @@ async def _cleanup_loop():
 async def lifespan(_: FastAPI):
     init_db()
     ingest.mark_interrupted()
+    sender_check = None
+    if get_settings().email_delivery == "brevo":
+        # Off the startup path: a slow or failing Brevo call only produces a log line.
+        # Holding the reference keeps the task from being garbage-collected mid-run.
+        sender_check = asyncio.create_task(asyncio.to_thread(mailer.check_sender))
     task = asyncio.create_task(_cleanup_loop())
     yield
+    if sender_check is not None:
+        sender_check.cancel()
     task.cancel()
     with suppress(asyncio.CancelledError):
         await task
 
 
 def create_app() -> FastAPI:
+    _configure_logging()
     settings = get_settings()
     app = FastAPI(title=f"{settings.app_name} API", version="2.0.0", lifespan=lifespan,
                   docs_url=None if settings.is_production else "/api/docs",

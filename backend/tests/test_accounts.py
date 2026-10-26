@@ -1,5 +1,6 @@
 """Email codes, GitHub App sign-in/linking/repo access, Google sign-in — HTTP fully mocked."""
 import json
+import logging
 from datetime import timedelta
 from urllib.parse import parse_qs, urlsplit
 
@@ -26,6 +27,7 @@ class FakeWeb:
         self.google_user = {"sub": "g-123", "email": "ada@example.com", "email_verified": True,
                             "name": "Ada", "picture": "https://a/ada.png"}
         self.access = "ghu_A"
+        self.senders, self.senders_status = [{"id": 1, "email": "me@gmail.com", "active": True}], 200
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         url, auth = str(request.url), request.headers.get("authorization", "")
@@ -65,6 +67,11 @@ class FakeWeb:
             return httpx.Response(200, json={"access_token": "g_at"} if ok else {"error": "invalid_grant"})
         if url.startswith("https://openidconnect.googleapis.com"):
             return httpx.Response(200, json=self.google_user)
+        if url == mailer.BREVO_SENDERS:
+            if self.senders_status != 200:
+                return httpx.Response(self.senders_status, json={"code": "unauthorized",
+                                                                 "message": "unrecognised IP address"})
+            return httpx.Response(200, json={"senders": self.senders})
         if url == mailer.BREVO_SEND:
             self.emails.append({"headers": dict(request.headers), "body": json.loads(request.content)})
             return httpx.Response(201, json={"messageId": "<1@brevo>"})
@@ -184,6 +191,57 @@ def test_brevo_request_shape(client, web, monkeypatch):
     assert body["to"] == [{"email": "new@example.com"}]
     code = body["subject"].split()[0]
     assert code.isdigit() and len(code) == 6 and code in body["textContent"]
+
+
+@pytest.fixture
+def brevo(web, monkeypatch, caplog):
+    s = get_settings()
+    for k, v in {"email_delivery": "brevo", "brevo_api_key": "xkeysib-test", "email_from": "Me@Gmail.com"}.items():
+        monkeypatch.setattr(s, k, v)
+    # The app logger doesn't propagate to root (see main._configure_logging), so attach caplog directly
+    app_log = logging.getLogger("app")
+    app_log.addHandler(caplog.handler)
+    caplog.set_level(logging.INFO, logger="app")
+    yield web
+    app_log.removeHandler(caplog.handler)
+
+
+def test_sender_check_reports_each_case(brevo, caplog):
+    assert mailer.check_sender() == "active"                   # case-insensitive match
+    assert "is active" in caplog.text
+
+    brevo.senders = [{"id": 1, "email": "me@gmail.com", "active": False}]
+    assert mailer.check_sender() == "inactive"
+    brevo.senders = [{"id": 2, "email": "someone-else@gmail.com", "active": True}]
+    assert mailer.check_sender() == "missing"
+    assert "never deliver" in caplog.text and "Senders" in caplog.text
+    brevo.senders_status = 401
+    assert mailer.check_sender() == "key_rejected"
+    assert "unrecognised IP address" in caplog.text
+
+
+def test_sender_check_survives_network_errors(brevo, monkeypatch):
+    def down(request):
+        raise httpx.ConnectError("down")
+    monkeypatch.setattr(oauth, "http", lambda: httpx.Client(transport=httpx.MockTransport(down)))
+    assert mailer.check_sender() == "unreachable"
+
+
+def test_accepted_email_is_logged_without_the_full_address(client, brevo, caplog):
+    register(client, email="private.person@example.com")
+    line = next(r.getMessage() for r in caplog.records if "Brevo accepted" in r.getMessage())
+    assert "pr***@example.com" in line and "<1@brevo>" in line
+    assert "private.person" not in caplog.text
+
+
+def test_startup_runs_the_sender_check(brevo, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    calls = []
+    monkeypatch.setattr(mailer, "check_sender", lambda: calls.append(1) or "active")
+    with TestClient(app):
+        pass
+    assert calls == [1]
 
 
 # ── GitHub App ────────────────────────────────────────────────────

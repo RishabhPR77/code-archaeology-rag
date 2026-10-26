@@ -13,10 +13,51 @@ from app.services import oauth
 
 log = logging.getLogger(__name__)
 BREVO_SEND = "https://api.brevo.com/v3/smtp/email"
+BREVO_SENDERS = "https://api.brevo.com/v3/senders"
+SENDERS_HELP = ("Add and confirm it in Brevo under Senders, domains & dedicated IPs -> Senders "
+                "(your Brevo login email always works).")
 
 
 class EmailError(Exception):
     pass
+
+
+def mask(address: str) -> str:
+    """Enough of an address to recognise it in logs without storing it in full."""
+    local, _, domain = address.partition("@")
+    return f"{local[:2]}***@{domain}" if domain else "***"
+
+
+def check_sender() -> str:
+    """Warn at startup if EMAIL_FROM can't send. Brevo accepts mail from an unconfirmed
+    sender and then silently drops it, so this is the only early signal.
+    Returns a short status for tests: active | inactive | missing | key_rejected | unreachable | error."""
+    s = get_settings()
+    try:
+        with oauth.http() as client:
+            r = client.get(BREVO_SENDERS, headers={"api-key": s.brevo_api_key, "accept": "application/json"})
+    except httpx.HTTPError:
+        log.warning("Couldn't reach Brevo to check EMAIL_FROM; sign-up codes may not send.")
+        return "unreachable"
+    if r.status_code in (401, 403):
+        # Includes Brevo's "unrecognised IP address" block
+        log.warning("Brevo rejected BREVO_API_KEY (%s): %s", r.status_code, r.text[:300])
+        return "key_rejected"
+    if r.status_code != 200:
+        log.warning("Couldn't check Brevo senders (%s): %s", r.status_code, r.text[:300])
+        return "error"
+    sender = next((x for x in r.json().get("senders", [])
+                   if (x.get("email") or "").lower() == s.email_from.lower()), None)
+    if sender is None:
+        log.warning("EMAIL_FROM %s is not a sender in this Brevo account, so Brevo will accept "
+                    "sign-up emails but never deliver them. %s", s.email_from, SENDERS_HELP)
+        return "missing"
+    if not sender.get("active"):
+        log.warning("EMAIL_FROM %s is in Brevo but not confirmed yet, so emails won't be delivered. %s",
+                    s.email_from, SENDERS_HELP)
+        return "inactive"
+    log.info("Brevo sender %s is active; sign-up codes will be emailed.", s.email_from)
+    return "active"
 
 
 def send(to: str, subject: str, text: str, html_body: str):
@@ -37,8 +78,14 @@ def send(to: str, subject: str, text: str, html_body: str):
     except httpx.HTTPError as e:
         raise EmailError("Couldn't reach the email service") from e
     if r.status_code not in (200, 201, 202):
-        log.error("Brevo rejected an email: %s %s", r.status_code, r.text[:300])
+        log.error("Brevo rejected an email to %s: %s %s", mask(to), r.status_code, r.text[:300])
         raise EmailError("The email service rejected the message")
+    try:
+        message_id = r.json().get("messageId", "?")
+    except ValueError:
+        message_id = "?"
+    # Accepted isn't delivered: Brevo -> Transactional -> Logs shows what happened next
+    log.info("Brevo accepted an email to %s (message %s)", mask(to), message_id)
 
 
 def send_verification_code(to: str, code: str, minutes: int):
