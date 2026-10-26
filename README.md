@@ -8,6 +8,10 @@ You bring your own model: connect an **Anthropic, OpenAI, Google Gemini, Groq or
 
 ![Landing page](docs/screenshots/landing.jpg)
 
+The landing page plays an animated walkthrough of the whole flow: connect a model, ingest a repository, ask why, explore the history.
+
+![Animated walkthrough](docs/screenshots/walkthrough.jpg)
+
 ---
 
 ## Contents
@@ -51,7 +55,8 @@ Code Archaeologist makes that history answerable:
 | **Authors** | Who built what: commit share, activity span, lines changed and the files each person owns. |
 | **Pull requests** | Merged PRs linked to the ingested commits, with labels. Their descriptions and reviews feed every answer. |
 | **Commits** | A searchable, filterable commit log with type classification. |
-| **Accounts** | Email and password sign-up, plus optional **Sign in with GitHub**. Every repository, key and answer is private to its owner. |
+| **Accounts** | Email and password sign-up with a 6-digit email code, plus **Continue with Google** and **Continue with GitHub**. Every repository, key and answer is private to its owner. |
+| **Private repositories** | Through a GitHub App, users pick which of their repositories to share. Access is read-only and can be changed on GitHub at any time. |
 
 ![Repository overview](docs/screenshots/overview.jpg)
 
@@ -81,7 +86,7 @@ flowchart LR
       UI[React + Vite SPA]
     end
     subgraph Server
-      NG[nginx<br/>static files + /api proxy] --> API[FastAPI]
+      API[FastAPI<br/>API + built React app]
       API --> DB[(PostgreSQL / SQLite<br/>users, encrypted keys,<br/>repos, chunks, answers)]
       API --> JOB[Ingest worker<br/>background task]
       JOB --> GH[(GitHub<br/>clone + PR API)]
@@ -90,7 +95,7 @@ flowchart LR
       API --> VEC
       API --> LLM[[User's LLM provider<br/>Anthropic · OpenAI · Gemini · Groq · OpenRouter]]
     end
-    UI --> NG
+    UI --> API
 ```
 
 **Ingestion**, a background job with live progress in the UI:
@@ -121,7 +126,7 @@ The analytics pages (overview, hot files, co-change, authors, PRs, commits) are 
 | Git and GitHub | GitPython, PyGithub |
 | Retrieval | Pinecone serverless and hosted embeddings, or sentence-transformers (BGE-small) locally; rank-bm25 |
 | LLM SDKs | `anthropic`, `openai` (also used for Groq and OpenRouter), `google-genai` |
-| Delivery | Docker, nginx, docker compose |
+| Delivery | One Docker container on Render (FastAPI serves the API and the built frontend) |
 
 ## Getting started
 
@@ -285,36 +290,12 @@ Every push to `main` redeploys automatically. On first use the app creates the `
 
 To turn on **Continue with GitHub**, **Continue with Google** or **email codes**, follow [Sign-in options](#sign-in-options) with `APP_URL` set to your `onrender.com` address, and add the values in the service's **Environment** tab. Render redeploys when you save.
 
-### Hugging Face Spaces (needs PRO)
+### Running it in production
 
-Docker Spaces now require a [PRO](https://huggingface.co/pro) subscription. With one, deploy the same image with [`deploy/huggingface/deploy.py`](deploy/huggingface/deploy.py). It creates the Space, saves the secrets from `backend/.env` after confirming the names, and uploads an allowlist of source files. Run it with `--dry-run` first:
-
-```bash
-backend/.venv/Scripts/python deploy/huggingface/deploy.py <username>/<space-name> --dry-run
-```
-
-### Self-hosted: docker compose
-
-The repository includes a production-style stack: PostgreSQL, the FastAPI API and nginx serving the built React app, with the API proxied under the same origin.
-
-1. Create `backend/.env` from the example and fill in `SECRET_KEY` and `ENCRYPTION_KEY`.
-2. Build and start the stack:
-
-```bash
-docker compose up --build -d
-```
-
-The app is served at <http://localhost:8080>.
-
-**Production checklist**
-
-- Serve over HTTPS and set `ENVIRONMENT=production` so cookies are marked `Secure`.
-- Set `PUBLIC_URL` (used for `FRONTEND_URL` in compose) to the public origin, and use it for the GitHub OAuth callback.
-- Use a strong `POSTGRES_PASSWORD`, and back up the database **and** `ENCRYPTION_KEY` together.
-- Set `PINECONE_API_KEY` so vectors survive container restarts, and `GITHUB_TOKEN` for reliable PR fetching.
-- Run **one API worker** per instance. Ingest jobs, the ingest semaphore and the login rate limiter are in-process; to scale out, move jobs to a queue such as RQ or Celery and the limiter to Redis.
-
-The API image installs CPU-only PyTorch and bakes the embedding model in, so the first ingest doesn't download it.
+- Render serves the site over HTTPS. Keep `ENVIRONMENT=production` so session cookies are marked `Secure`.
+- Back up the database **and** `ENCRYPTION_KEY` together: without the key, saved API keys and GitHub tokens can't be decrypted.
+- Run **one API worker**. Ingest jobs, the ingest limit and the login rate limiter live in the process; scaling out would need a job queue (such as RQ or Celery) and a shared limiter (such as Redis).
+- Schema migrations run automatically on every start.
 
 ## Security
 
@@ -326,7 +307,7 @@ The API image installs CPU-only PyTorch and bakes the embedding model in, so the
 - **Isolation.** Every repository, vector namespace, key and saved answer belongs to one user. Other users get a `404`.
 - **Model output** is rendered as Markdown without raw HTML, so content from commits or models can't inject markup.
 - **Provider errors** never surface as `401`, so a bad API key can't be mistaken for an expired session.
-- **nginx** sends `X-Content-Type-Options`, `X-Frame-Options: DENY` and a strict referrer policy.
+- **Responses** carry `X-Content-Type-Options: nosniff` and a strict referrer policy.
 
 ## API
 
@@ -355,10 +336,10 @@ cd backend
 python -m pytest
 ```
 
-There are 68 tests:
+There are 72 tests:
 
 - **Auth:** sessions, cookie flags, rate limiting and admin handling.
-- **Accounts:** email codes (hashing, expiry, attempt and resend limits), GitHub App sign-in, linking and token refresh, Google sign-in, pre-hijack protection, private-repo cloning, and the Brevo request format. All HTTP is mocked.
+- **Accounts:** email codes (hashing, expiry, attempt and resend limits), GitHub App sign-in, linking and token refresh, Google sign-in, pre-hijack protection, private-repo cloning, the Brevo request format and the startup check of the Brevo sender. All HTTP is mocked.
 - **Migrations:** a database created before migrations existed is stamped and upgraded in place.
 - **Keys:** encryption, never echoing a key back, and per-user isolation.
 - **Ingestion and analytics:** the full ingest-to-answer flow, limits, expiry cleanup and deletion of vectors.
@@ -377,34 +358,34 @@ npm run build
 code-archaeology-rag/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py              # FastAPI app, lifespan, expiry cleanup loop
+│   │   ├── main.py              # FastAPI app, startup checks, expiry cleanup, serves the built frontend
 │   │   ├── config.py            # Settings (env vars)
 │   │   ├── db.py · models.py    # SQLAlchemy engine and tables
 │   │   ├── security.py          # bcrypt, JWT sessions, Fernet key encryption
 │   │   ├── deps.py · schemas.py # auth dependencies, rate limiter, request/response models
 │   │   ├── llm/                 # one adapter per provider + live model registry
-│   │   ├── routers/             # auth, providers, repos
-│   │   └── services/            # ingest jobs, RAG prompts, usage limits
+│   │   ├── routers/             # auth, github, providers, repos
+│   │   └── services/            # ingest jobs, RAG prompts, OAuth, GitHub, email codes, usage limits
 │   ├── ingestion/               # git_loader, github_enricher, chunker
 │   ├── storage/vector_store.py  # local or hosted embeddings, Pinecone or local store, hybrid search
 │   ├── retrieval/analytics.py   # hot files, co-change, authors, PRs, timelines
 │   ├── migrations/              # Alembic schema migrations (run on every start)
-│   ├── tests/
-│   └── Dockerfile
+│   └── tests/
 ├── frontend/
-│   ├── src/
-│   │   ├── pages/               # Landing, Auth, Dashboard, Settings, repo/* tabs
-│   │   ├── components/          # UI kit, model picker, markdown, dialogs
-│   │   ├── layouts/AppLayout.tsx
-│   │   └── lib/                 # API client, types, queries, theme
-│   ├── nginx.conf
-│   └── Dockerfile
-└── docker-compose.yml
+│   └── src/
+│       ├── pages/               # Landing (with the animated walkthrough), Auth, Verify email,
+│       │                        # Dashboard, Settings, Privacy, Terms, repo/* tabs
+│       ├── components/          # UI kit, product walkthrough, model picker, markdown, dialogs
+│       ├── layouts/AppLayout.tsx
+│       └── lib/                 # API client, types, queries, theme
+├── docs/screenshots/            # images used in this README
+├── Dockerfile                   # single production image (built by Render)
+└── render.yaml                  # Render Blueprint
 ```
 
 ## Limitations and roadmap
 
-- Only **public** GitHub repositories are supported.
+- Private repositories need the GitHub App set up (see [Sign-in options](#sign-in-options)); otherwise only public repositories can be ingested.
 - PR context needs the GitHub API. Without a token, anonymous limits (60 requests per hour) may skip PRs; the app says so and **Re-sync** retries.
 - Answer quality depends on commit and PR quality. Descriptive history produces much better answers than a log of "update" commits.
 - Answers arrive in one piece. Token streaming is a natural next step.

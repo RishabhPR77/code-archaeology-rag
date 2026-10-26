@@ -1,7 +1,6 @@
 # Single container: FastAPI serves the API and the built React app on one port.
 # Slim build for free hosts (Render free = 512 MB): embeddings come from Pinecone's
 # hosted models, so there is no torch or local model in the image.
-# The multi-service stack with local embeddings lives in docker-compose.yml.
 
 FROM node:22-alpine AS web
 WORKDIR /web
@@ -17,7 +16,7 @@ FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 
-# UID 1000 also satisfies Hugging Face Spaces
+# Run as an unprivileged user
 RUN useradd -m -u 1000 user
 USER user
 ENV HOME=/home/user \

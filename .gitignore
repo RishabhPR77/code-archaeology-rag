@@ -24,6 +24,9 @@ frontend/dist/
 # Model caches
 .cache/
 
+# Local tooling
+.claude/
+
 # OS / editors
 .DS_Store
 Thumbs.db
