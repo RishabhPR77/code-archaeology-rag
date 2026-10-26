@@ -1,6 +1,6 @@
 import type {
-  AskMode, Author, CoChange, Commit, HotFile, Me, Model, Overview, Provider, ProviderId,
-  PullRequest, QueryResult, Repo, TimelineResult,
+  AskMode, AuthConfig, Author, CoChange, Commit, GitHubRepo, GitHubStatus, HotFile, Me, Model,
+  Overview, Provider, ProviderId, PullRequest, QueryResult, Repo, TimelineResult,
 } from "./types";
 
 export class ApiError extends Error {
@@ -48,7 +48,7 @@ const del = (p: string) => request<void>("DELETE", p);
 
 export const api = {
   // Auth
-  authConfig: () => get<{ github_enabled: boolean }>("/auth/config"),
+  authConfig: () => get<AuthConfig>("/auth/config"),
   me: async (): Promise<Me | null> => {
     try {
       return await get<Me>("/auth/me");
@@ -61,6 +61,13 @@ export const api = {
   register: (email: string, password: string, name: string) =>
     post<Me>("/auth/register", { email, password, name }),
   logout: () => post<void>("/auth/logout"),
+  verifyEmail: (code: string) => post<Me>("/auth/verify-email", { code }),
+  resendCode: () => post<void>("/auth/resend-code"),
+
+  // GitHub App
+  githubStatus: () => get<GitHubStatus>("/github/status"),
+  githubRepos: () => get<GitHubRepo[]>("/github/repos"),
+  disconnectGitHub: () => del("/github"),
 
   // Providers
   providers: () => get<Provider[]>("/providers"),

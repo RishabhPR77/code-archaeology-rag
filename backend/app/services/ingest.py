@@ -14,7 +14,7 @@ import git
 from app.config import get_settings
 from app.db import SessionLocal
 from app.models import Repo, RepoData, User, utcnow
-from app.security import decrypt_secret
+from app.services import github
 from ingestion.chunker import build_chunks
 from ingestion.git_loader import load_commits
 from ingestion.github_enricher import fetch_prs
@@ -55,18 +55,30 @@ def run_ingest(repo_id: str):
         if repo is None:
             return
         user = db.get(User, repo.user_id)
-        token = decrypt_secret(user.github_token_enc) if user and user.github_token_enc else None
+        user_token = None
+        if user and user.github_token_enc:
+            try:
+                user_token = github.user_token(db, user)
+            except github.GitHubNotConnected:
+                user_token = None
         url, full_name, namespace, max_commits = repo.url, repo.full_name, repo.namespace, repo.max_commits
-    token = token or settings.github_token or None
+        private = repo.is_private
+    api_token = user_token or settings.github_token or None
 
     _update(repo_id, status="queued", stage_message="Waiting for a free ingest slot", error=None)
+    if private and not user_token:
+        _update(repo_id, status="failed", stage_message="Failed",
+                error="This is a private repository. Connect GitHub in Settings, then use Re-sync.")
+        return
     tmp = None
     try:
         with _slots:
             _update(repo_id, status="cloning", stage_message=f"Cloning {full_name}")
             tmp = tempfile.mkdtemp(prefix="ca-clone-")
-            # Shallow clone: twice the window so every ingested commit still has its parent
-            git.Repo.clone_from(url, tmp, depth=max_commits * 2, single_branch=True, no_tags=True)
+            # Shallow clone: twice the window so every ingested commit still has its parent.
+            # Private repos authenticate through the environment, never the URL.
+            git.Repo.clone_from(url, tmp, depth=max_commits * 2, single_branch=True, no_tags=True,
+                                env=github.git_auth_env(user_token) if private else {"GIT_TERMINAL_PROMPT": "0"})
 
             _update(repo_id, status="extracting", stage_message=f"Reading the last {max_commits} commits")
             commits = load_commits(tmp, max_count=max_commits)
@@ -77,7 +89,7 @@ def run_ingest(repo_id: str):
             prs, warnings = [], []
             try:
                 oldest = min(datetime.fromisoformat(c.timestamp) for c in commits)
-                result = fetch_prs(full_name, max_prs=min(200, max_commits * 2), token=token, since=oldest)
+                result = fetch_prs(full_name, max_prs=min(200, max_commits * 2), token=api_token, since=oldest)
                 prs, warnings = result.prs, result.warnings
             except Exception as e:
                 warnings.append(f"Pull requests unavailable ({e}). Answers use commit data only.")
@@ -110,7 +122,8 @@ def run_ingest(repo_id: str):
         log.exception("Ingest failed for %s", full_name)
         message = str(e).strip().splitlines()[0][:300] if str(e).strip() else type(e).__name__
         if isinstance(e, git.GitCommandError):
-            message = "Couldn't clone the repository. Check that it exists and is public."
+            message = ("Couldn't clone this private repository. Check that the GitHub App still has access to it."
+                       if private else "Couldn't clone the repository. Check that it exists and is public.")
         try:
             _update(repo_id, status="failed", stage_message="Failed", error=message)
         except _Cancelled:

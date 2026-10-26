@@ -58,5 +58,7 @@ def test_admin_email_gets_unlimited(client):
 
 
 def test_github_disabled_without_config(client):
-    assert client.get("/api/auth/config").json() == {"github_enabled": False}
+    assert client.get("/api/auth/config").json() == {
+        "github_enabled": False, "google_enabled": False, "email_verification": False}
     assert client.get("/api/auth/github/login", follow_redirects=False).status_code == 404
+    assert client.get("/api/auth/google/login", follow_redirects=False).status_code == 404

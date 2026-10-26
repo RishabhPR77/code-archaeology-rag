@@ -19,6 +19,8 @@ RUN pip install --index-url https://download.pytorch.org/whl/cpu "torch==2.9.1" 
 # Bake the embedding model into the image so the first ingest doesn't download it
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-en-v1.5')"
 
+COPY alembic.ini ./
+COPY migrations ./migrations
 COPY app ./app
 COPY ingestion ./ingestion
 COPY storage ./storage

@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ExternalLink, Loader2, RefreshCw, Trash2, TriangleAlert, XCircle } from "lucide-react";
+import { Check, ExternalLink, Loader2, Lock, RefreshCw, Trash2, TriangleAlert, XCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
 
-import { Button, Card, ConfirmDialog, ErrorNotice, Skeleton } from "../../components/ui";
+import { Badge, Button, Card, ConfirmDialog, ErrorNotice, Skeleton } from "../../components/ui";
 import { api, ApiError } from "../../lib/api";
 import { meKey } from "../../lib/auth";
 import { reposKey } from "../../lib/queries";
@@ -139,6 +139,7 @@ export default function RepoPage() {
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2.5">
                 <h1 className="truncate font-mono text-xl font-semibold tracking-tight">{r.full_name}</h1>
+                {r.is_private && <Badge tone="warning"><Lock className="size-3" /> Private</Badge>}
                 <RepoStatusBadge repo={r} />
               </div>
               <p className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted">

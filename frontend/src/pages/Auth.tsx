@@ -1,19 +1,25 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Eye, EyeOff } from "lucide-react";
 import { useState, type FormEvent, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 
-import { GitHubIcon, Logo, ThemeToggle } from "../components/brand";
+import { GitHubIcon, GoogleIcon, Logo, ThemeToggle } from "../components/brand";
 import { Button, ErrorNotice, Input, Label } from "../components/ui";
 import { api } from "../lib/api";
 import { meKey } from "../lib/auth";
+import { useAuthConfig } from "../lib/queries";
 
 const OAUTH_ERRORS: Record<string, string> = {
   github_denied: "GitHub sign-in was cancelled.",
-  github_state: "That sign-in link expired. Please try again.",
+  github_state: "That sign-in attempt expired. Please try again.",
   github_token: "GitHub didn't accept the sign-in. Please try again.",
   github_unavailable: "Couldn't reach GitHub. Please try again.",
-  github_no_email: "Your GitHub account has no verified email address.",
+  github_no_email: "Your GitHub account has no verified email address we can read.",
+  google_denied: "Google sign-in was cancelled.",
+  google_state: "That sign-in attempt expired. Please try again.",
+  google_token: "Google didn't accept the sign-in. Please try again.",
+  google_unavailable: "Couldn't reach Google. Please try again.",
+  google_unverified: "Your Google account's email address isn't verified.",
 };
 
 function AuthShell({ title, subtitle, children, footer }: {
@@ -38,16 +44,28 @@ function AuthShell({ title, subtitle, children, footer }: {
   );
 }
 
-function GitHubButton() {
-  const { data } = useQuery({ queryKey: ["auth-config"], queryFn: api.authConfig, staleTime: Infinity });
-  if (!data?.github_enabled) return null;
+function OAuthButtons() {
+  const { data } = useAuthConfig();
+  if (!data?.google_enabled && !data?.github_enabled) return null;
+  // Full-page navigations: the server redirects to the provider and back
   return (
     <>
-      <a href="/api/auth/github/login" className="block">
-        <Button type="button" variant="secondary" size="lg" className="w-full">
-          <GitHubIcon /> Continue with GitHub
-        </Button>
-      </a>
+      <div className="space-y-2.5">
+        {data.google_enabled && (
+          <a href="/api/auth/google/login" className="block">
+            <Button type="button" variant="secondary" size="lg" className="w-full">
+              <GoogleIcon /> Continue with Google
+            </Button>
+          </a>
+        )}
+        {data.github_enabled && (
+          <a href="/api/auth/github/login" className="block">
+            <Button type="button" variant="secondary" size="lg" className="w-full">
+              <GitHubIcon /> Continue with GitHub
+            </Button>
+          </a>
+        )}
+      </div>
       <div className="my-6 flex items-center gap-3 text-xs text-subtle">
         <div className="h-px flex-1 bg-border" /> or with email <div className="h-px flex-1 bg-border" />
       </div>
@@ -96,7 +114,7 @@ export function Login() {
     <AuthShell title="Welcome back" subtitle="Sign in to your workspace."
                footer={<>New here? <Link to="/register" className="font-medium text-accent hover:underline">Create an account</Link></>}>
       {oauthError && <ErrorNotice error={new Error(oauthError)} className="mb-5" />}
-      <GitHubButton />
+      <OAuthButtons />
       <form onSubmit={submit} className="space-y-4">
         <div>
           <Label htmlFor="email">Email</Label>
@@ -126,7 +144,7 @@ export function Register() {
   return (
     <AuthShell title="Create your account" subtitle="Bring your own model key. Start digging in minutes."
                footer={<>Already have an account? <Link to="/login" className="font-medium text-accent hover:underline">Sign in</Link></>}>
-      <GitHubButton />
+      <OAuthButtons />
       <form onSubmit={submit} className="space-y-4">
         <div>
           <Label htmlFor="name">Name</Label>

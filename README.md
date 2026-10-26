@@ -213,13 +213,49 @@ All settings are environment variables, read from `backend/.env`. See [`backend/
 
 The limits exist because ingestion uses the server's own resources (CPU embeddings, Pinecone, the GitHub API). Answers use the user's key, so they are not rate-limited.
 
-### Sign in with GitHub
+### Sign-in options
 
-1. Create an OAuth app at <https://github.com/settings/developers>.
-2. Set **Authorization callback URL** to `{FRONTEND_URL}/api/auth/github/callback`, for example `http://localhost:5173/api/auth/github/callback`.
-3. Put the client ID and secret in `backend/.env` and restart the API. The button appears on the sign-in pages.
+All three are optional and turn on when their settings are present. Below, `APP_URL` means your public URL, for example `https://code-archaeologist-a9ms.onrender.com`, or `http://localhost:5173` in development. On Render, add each value in the service's **Environment** tab. Locally, put them in `backend/.env`.
 
-The app requests the `read:user user:email` scopes. A GitHub account with a verified email that matches an existing account is linked to it.
+**Continue with GitHub (GitHub App).** One GitHub App handles sign-in and gives read-only access to the repositories each user chooses, private ones included. An OAuth App can't do that without the `repo` scope, which also grants write access.
+
+1. Open <https://github.com/settings/apps/new>.
+2. Fill in the basics:
+   - **Homepage URL:** `APP_URL`
+   - **Callback URL:** `APP_URL/api/auth/github/callback`
+   - Keep **Expire user authorization tokens** checked.
+   - Leave **Request user authorization (OAuth) during installation** unchecked.
+   - **Setup URL:** `APP_URL/app/settings?github=installed`, with **Redirect on update** checked.
+   - **Webhook:** uncheck **Active**.
+3. Set the permissions:
+   - **Repository permissions:** Contents → Read-only, Pull requests → Read-only. Metadata is read-only automatically.
+   - **Account permissions:** Email addresses → Read-only.
+4. Set **Where can this GitHub App be installed?** to **Any account**, then click **Create GitHub App**.
+5. On the app's page, copy the **Client ID** and click **Generate a new client secret**. The slug is the last part of the app's public URL, `github.com/apps/<slug>`.
+6. Set `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` and `GITHUB_APP_SLUG`.
+
+Users sign in, or connect GitHub from Settings, then pick repositories on GitHub. Those repositories appear under **New repository → Your GitHub**. Private repositories are cloned with the user's token passed through git's environment, so it never appears in URLs or logs. Their history is stored like any other ingested repository and deleted after `REPO_TTL_HOURS`.
+
+**Continue with Google.**
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), create a project, then open **Google Auth Platform**.
+2. Under **Branding**, set the app name and support email.
+3. Under **Audience**, choose **External** and click **Publish app**. The basic `openid email profile` scopes need no review.
+4. Under **Clients → Create client**, choose **Web application**:
+   - **Authorized JavaScript origin:** `APP_URL`
+   - **Authorized redirect URI:** `APP_URL/api/auth/google/callback`
+5. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+
+**Email codes at sign-up.** New email-and-password accounts must enter a 6-digit code before using the app; Google and GitHub sign-ins are already verified. Codes are stored only as an HMAC. Each code expires after 10 minutes and allows 5 attempts, and resends are limited to one per minute and five per hour. Accounts created before verification existed stay verified.
+
+Render's free plan blocks outgoing SMTP, so codes go through [Brevo](https://www.brevo.com/)'s HTTP API, which is free for 300 emails a day:
+
+1. Create a Brevo account.
+2. Under **Senders, domains & dedicated IPs → Senders**, add the address to send from and confirm it.
+3. Under **SMTP & API → API keys**, generate a key.
+4. Set `EMAIL_DELIVERY=brevo`, `BREVO_API_KEY` and `EMAIL_FROM` (the confirmed sender).
+
+Without a domain of your own, codes come from a free address such as Gmail and are more likely to land in spam. The verify page tells users to check there. For development, `EMAIL_DELIVERY=console` prints codes in the server log.
 
 ## Deployment
 
@@ -247,7 +283,7 @@ The root [`Dockerfile`](Dockerfile) builds one slim container in which FastAPI s
 
 Every push to `main` redeploys automatically. On first use the app creates the `code-archaeologist-llama` Pinecone index (1024 dimensions). It is separate from the 384-dimension index used by local embeddings, because the two kinds of vectors can't share an index.
 
-For **Sign in with GitHub**, use the callback `https://<service-name>.onrender.com/api/auth/github/callback` and add `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` in the service's **Environment** tab.
+To turn on **Continue with GitHub**, **Continue with Google** or **email codes**, follow [Sign-in options](#sign-in-options) with `APP_URL` set to your `onrender.com` address, and add the values in the service's **Environment** tab. Render redeploys when you save.
 
 ### Hugging Face Spaces (needs PRO)
 
@@ -284,7 +320,9 @@ The API image installs CPU-only PyTorch and bakes the embedding model in, so the
 
 - **API keys** are verified with the provider, encrypted at rest with Fernet and only ever decrypted server-side for a call. They are never returned to the browser; the UI sees a short hint such as `sk-a…9f2c`, and only for long keys.
 - **Sessions** are signed JWTs in an `httpOnly`, `SameSite=Lax` cookie (`Secure` in production). They are never readable by JavaScript.
-- **Passwords** are hashed with bcrypt. Sign-in and sign-up are rate-limited per IP.
+- **Passwords** are hashed with bcrypt. Sign-in, sign-up and code checks are rate-limited per IP.
+- **OAuth** flows use `state` plus PKCE. A Google or GitHub sign-in that claims an email address whose password account was never verified removes that unverified password, which blocks account pre-hijacking.
+- **GitHub access** is a GitHub App with read-only permissions on the repositories each user picks. Tokens are encrypted at rest and refreshed before they expire.
 - **Isolation.** Every repository, vector namespace, key and saved answer belongs to one user. Other users get a `404`.
 - **Model output** is rendered as Markdown without raw HTML, so content from commits or models can't inject markup.
 - **Provider errors** never surface as `401`, so a bad API key can't be mistaken for an expired session.
@@ -298,7 +336,9 @@ The interactive OpenAPI docs are available at `/api/docs` in development.
 |---|---|
 | `POST /api/auth/register` · `/login` · `/logout` | Email and password auth |
 | `GET /api/auth/me` | Current user and usage limits |
-| `GET /api/auth/github/login` → `/callback` | GitHub OAuth |
+| `POST /api/auth/verify-email` · `POST /api/auth/resend-code` | Sign-up email code |
+| `GET /api/auth/github/login` → `/callback` · `GET /api/auth/google/login` → `/callback` | GitHub App and Google sign-in (PKCE) |
+| `GET /api/github/status` · `GET /api/github/repos` · `DELETE /api/github` | GitHub connection and the repositories a user shared |
 | `GET /api/providers` | The five providers and this user's status for each |
 | `PUT /api/providers/{id}/key` | Verify and save a key; returns the live model list |
 | `GET /api/providers/{id}/models` | Live model list (`?refresh=true` bypasses the 10-minute cache) |
@@ -315,9 +355,11 @@ cd backend
 python -m pytest
 ```
 
-There are 37 tests:
+There are 68 tests:
 
 - **Auth:** sessions, cookie flags, rate limiting and admin handling.
+- **Accounts:** email codes (hashing, expiry, attempt and resend limits), GitHub App sign-in, linking and token refresh, Google sign-in, pre-hijack protection, private-repo cloning, and the Brevo request format. All HTTP is mocked.
+- **Migrations:** a database created before migrations existed is stamped and upgraded in place.
 - **Keys:** encryption, never echoing a key back, and per-user isolation.
 - **Ingestion and analytics:** the full ingest-to-answer flow, limits, expiry cleanup and deletion of vectors.
 - **Provider adapters:** all five adapters run their **real SDKs against mocked HTTP**, with response bodies shaped like each provider's official API reference. This pins down exactly what is sent (for example, no `temperature` for Anthropic and OpenAI) and how responses and errors are parsed.
@@ -346,6 +388,7 @@ code-archaeology-rag/
 │   ├── ingestion/               # git_loader, github_enricher, chunker
 │   ├── storage/vector_store.py  # local or hosted embeddings, Pinecone or local store, hybrid search
 │   ├── retrieval/analytics.py   # hot files, co-change, authors, PRs, timelines
+│   ├── migrations/              # Alembic schema migrations (run on every start)
 │   ├── tests/
 │   └── Dockerfile
 ├── frontend/

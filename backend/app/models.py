@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (Boolean, DateTime, ForeignKey, Integer, String, Text,
-                        UniqueConstraint)
+                        UniqueConstraint, false, true)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -19,10 +19,17 @@ class User(Base):
     id:               Mapped[int] = mapped_column(primary_key=True)
     email:            Mapped[str] = mapped_column(String(320), unique=True, index=True)
     name:             Mapped[str] = mapped_column(String(120), default="")
-    password_hash:    Mapped[str | None] = mapped_column(String(100))   # None for GitHub-only accounts
+    password_hash:    Mapped[str | None] = mapped_column(String(100))   # None for OAuth-only accounts
+    # Accounts that existed before verification was added are treated as verified
+    email_verified:   Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    google_sub:       Mapped[str | None] = mapped_column(String(64), unique=True)
     github_id:        Mapped[int | None] = mapped_column(Integer, unique=True)
     github_login:     Mapped[str | None] = mapped_column(String(100))
-    github_token_enc: Mapped[str | None] = mapped_column(Text)          # used for PR fetching
+    # GitHub App user tokens: 8h access token + 6-month refresh token, both encrypted
+    github_token_enc:          Mapped[str | None] = mapped_column(Text)
+    github_token_expires_at:   Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    github_refresh_enc:        Mapped[str | None] = mapped_column(Text)
+    github_refresh_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     avatar_url:       Mapped[str | None] = mapped_column(String(500))
     is_admin:         Mapped[bool] = mapped_column(Boolean, default=False)
     active_provider:  Mapped[str | None] = mapped_column(String(32))
@@ -57,6 +64,7 @@ class Repo(Base):
     user_id:       Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     url:           Mapped[str] = mapped_column(String(300))
     full_name:     Mapped[str] = mapped_column(String(200))             # owner/name
+    is_private:    Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     namespace:     Mapped[str] = mapped_column(String(200), unique=True)
     max_commits:   Mapped[int] = mapped_column(Integer)
     status:        Mapped[str] = mapped_column(String(20), default="queued")
@@ -95,6 +103,19 @@ class Query(Base):
     model:        Mapped[str] = mapped_column(String(200))
     sources_json: Mapped[str] = mapped_column(Text, default="[]")
     created_at:   Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class EmailVerification(Base):
+    """The pending sign-up code for a user. Only an HMAC of the code is stored."""
+    __tablename__ = "email_verifications"
+
+    user_id:         Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    code_hash:       Mapped[str] = mapped_column(String(64))
+    expires_at:      Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    attempts:        Mapped[int] = mapped_column(Integer, default=0)
+    last_sent_at:    Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    sends_in_window: Mapped[int] = mapped_column(Integer, default=1)
+    window_started:  Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class IngestEvent(Base):

@@ -4,7 +4,10 @@ from collections.abc import Iterator
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-from app.config import get_settings
+from app.config import BACKEND_DIR, get_settings
+
+# The schema create_all produced before migrations existed
+BASELINE_REVISION = "0001"
 
 
 class Base(DeclarativeBase):
@@ -40,6 +43,30 @@ def get_db() -> Iterator[Session]:
         yield db
 
 
+def _alembic(connection):
+    from alembic.config import Config
+    cfg = Config(str(BACKEND_DIR / "alembic.ini"))
+    cfg.set_main_option("script_location", str(BACKEND_DIR / "migrations"))
+    cfg.attributes["connection"] = connection
+    return cfg
+
+
 def init_db():
-    from app import models  # noqa: F401 — registers tables
-    Base.metadata.create_all(engine)
+    """Bring the schema up to date. Safe to run on every start."""
+    from alembic import command
+    from sqlalchemy import inspect
+
+    with engine.begin() as conn:
+        cfg = _alembic(conn)
+        tables = set(inspect(conn).get_table_names())
+        if "users" in tables and "alembic_version" not in tables:
+            # Created by create_all before migrations existed — that is the baseline
+            command.stamp(cfg, BASELINE_REVISION)
+        command.upgrade(cfg, "head")
+
+
+def stamp_head():
+    """Mark a schema built with create_all (tests) as current."""
+    from alembic import command
+    with engine.begin() as conn:
+        command.stamp(_alembic(conn), "head")

@@ -34,6 +34,8 @@ WORKDIR $HOME/app
 COPY --chown=user backend/requirements.txt .
 RUN pip install --user -r requirements.txt
 
+COPY --chown=user backend/alembic.ini ./
+COPY --chown=user backend/migrations ./migrations
 COPY --chown=user backend/app ./app
 COPY --chown=user backend/ingestion ./ingestion
 COPY --chown=user backend/storage ./storage

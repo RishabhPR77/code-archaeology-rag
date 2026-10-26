@@ -5,7 +5,11 @@ export interface User {
   email: string;
   name: string;
   avatar_url: string | null;
+  email_verified: boolean;
+  code_resend_in: number;
   github_login: string | null;
+  github_connected: boolean;
+  google_linked: boolean;
   has_password: boolean;
   is_admin: boolean;
   active_provider: ProviderId | null;
@@ -50,10 +54,42 @@ export interface Model {
 
 export type RepoStatus = "queued" | "cloning" | "extracting" | "fetching_prs" | "embedding" | "ready" | "failed";
 
+export interface AuthConfig {
+  github_enabled: boolean;
+  google_enabled: boolean;
+  email_verification: boolean;
+}
+
+export interface GitHubInstallation {
+  id: number;
+  account: string;
+  repository_selection: "all" | "selected";
+  manage_url: string | null;
+}
+
+export interface GitHubStatus {
+  enabled: boolean;
+  connected: boolean;
+  login: string | null;
+  install_url: string | null;
+  installations: GitHubInstallation[];
+  error: string | null;
+}
+
+export interface GitHubRepo {
+  full_name: string;
+  private: boolean;
+  html_url: string;
+  description: string | null;
+  updated_at: string | null;
+  default_branch: string | null;
+}
+
 export interface Repo {
   id: string;
   url: string;
   full_name: string;
+  is_private: boolean;
   status: RepoStatus;
   stage_message: string;
   error: string | null;

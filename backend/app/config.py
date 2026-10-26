@@ -41,9 +41,22 @@ class Settings(BaseSettings):
     embedding_provider: Literal["local", "pinecone"] = "local"
     embedding_model: str = "llama-text-embed-v2"  # used when embedding_provider=pinecone
 
-    # GitHub OAuth app — both empty disables "Sign in with GitHub"
+    # GitHub App — powers "Continue with GitHub" and read-only access to the repos users pick.
+    # Client ID + secret enable sign-in; the slug builds the "choose repositories" link.
     github_client_id: str = ""
     github_client_secret: str = ""
+    github_app_slug: str = ""
+
+    # Google OAuth client — both empty hides "Continue with Google"
+    google_client_id: str = ""
+    google_client_secret: str = ""
+
+    # Sign-up email codes. "off": no verification; "console": codes are logged (development);
+    # "brevo": sent through Brevo's HTTP API (free hosts block SMTP ports)
+    email_delivery: Literal["off", "console", "brevo"] = "off"
+    brevo_api_key: str = ""
+    email_from: str = ""                          # a sender address verified in Brevo
+    email_from_name: str = "Code Archaeologist"
 
     # Usage limits (admins bypass them)
     admin_emails: str = ""                        # comma-separated
@@ -60,7 +73,21 @@ class Settings(BaseSettings):
         self.frontend_url = self.frontend_url.rstrip("/")
         if self.embedding_provider == "pinecone" and not self.pinecone_api_key:
             raise ValueError("EMBEDDING_PROVIDER=pinecone needs PINECONE_API_KEY")
+        if self.email_delivery == "brevo" and not (self.brevo_api_key and self.email_from):
+            raise ValueError("EMAIL_DELIVERY=brevo needs BREVO_API_KEY and EMAIL_FROM")
         return self
+
+    @property
+    def email_verification_enabled(self) -> bool:
+        return self.email_delivery != "off"
+
+    @property
+    def google_oauth_enabled(self) -> bool:
+        return bool(self.google_client_id and self.google_client_secret)
+
+    @property
+    def github_install_url(self) -> str | None:
+        return f"https://github.com/apps/{self.github_app_slug}/installations/new" if self.github_app_slug else None
 
     @property
     def db_url(self) -> str:

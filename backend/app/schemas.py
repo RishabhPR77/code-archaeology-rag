@@ -34,13 +34,21 @@ class LoginIn(BaseModel):
     password: str
 
 
+class VerifyEmailIn(BaseModel):
+    code: str = Field(pattern=r"^\d{6}$")
+
+
 class UserOut(BaseModel):
-    id:              int
-    email:           str
-    name:            str
-    avatar_url:      str | None
-    github_login:    str | None
-    has_password:    bool
+    id:               int
+    email:            str
+    name:             str
+    avatar_url:       str | None
+    email_verified:   bool
+    code_resend_in:   int = 0          # seconds until another sign-up code may be requested
+    github_login:     str | None
+    github_connected: bool
+    google_linked:    bool
+    has_password:     bool
     is_admin:        bool
     active_provider: str | None
     active_model:    str | None
@@ -64,7 +72,35 @@ class MeOut(BaseModel):
 
 
 class AuthConfigOut(BaseModel):
-    github_enabled: bool
+    github_enabled:     bool
+    google_enabled:     bool
+    email_verification: bool
+
+
+# ── GitHub ─────────────────────────────────────────────────────────
+class GitHubInstallationOut(BaseModel):
+    id:                   int
+    account:              str
+    repository_selection: str
+    manage_url:           str | None
+
+
+class GitHubStatusOut(BaseModel):
+    enabled:       bool
+    connected:     bool
+    login:         str | None
+    install_url:   str | None
+    installations: list[GitHubInstallationOut]
+    error:         str | None = None
+
+
+class GitHubRepoOut(BaseModel):
+    full_name:      str
+    private:        bool
+    html_url:       str
+    description:    str | None
+    updated_at:     str | None
+    default_branch: str | None
 
 
 # ── Providers ──────────────────────────────────────────────────────
@@ -127,6 +163,7 @@ class RepoOut(BaseModel):
     id:            str
     url:           str
     full_name:     str
+    is_private:    bool
     status:        str
     stage_message: str
     error:         str | None

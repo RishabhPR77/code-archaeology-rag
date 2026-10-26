@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app import llm
 from app.db import get_db
-from app.deps import current_user
+from app.deps import verified_user
 from app.llm import PROVIDERS, ProviderError
 from app.models import ProviderCredential, User
 from app.schemas import (ActiveProviderIn, ModelOut, ProviderOut, SaveKeyIn, SaveKeyOut,
@@ -43,14 +43,14 @@ def _require_credential(db: Session, user: User, provider_id: str) -> ProviderCr
 
 
 @router.get("", response_model=list[ProviderOut])
-def list_providers(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def list_providers(user: User = Depends(verified_user), db: Session = Depends(get_db)):
     creds = {c.provider: c for c in user.credentials}
     return [_provider_out(user, pid, creds.get(pid)) for pid in PROVIDERS]
 
 
 @router.put("/{provider_id}/key", response_model=SaveKeyOut)
 def save_key(provider_id: str, body: SaveKeyIn,
-             user: User = Depends(current_user), db: Session = Depends(get_db)):
+             user: User = Depends(verified_user), db: Session = Depends(get_db)):
     _require_provider(provider_id)
     # Listing models with the key is the validation step
     try:
@@ -77,7 +77,7 @@ def save_key(provider_id: str, body: SaveKeyIn,
 
 
 @router.delete("/{provider_id}/key", status_code=status.HTTP_204_NO_CONTENT)
-def delete_key(provider_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def delete_key(provider_id: str, user: User = Depends(verified_user), db: Session = Depends(get_db)):
     cred = _require_credential(db, user, provider_id)
     db.delete(cred)
     if user.active_provider == provider_id:
@@ -88,7 +88,7 @@ def delete_key(provider_id: str, user: User = Depends(current_user), db: Session
 
 @router.get("/{provider_id}/models", response_model=list[ModelOut])
 def provider_models(provider_id: str, refresh: bool = Query(False),
-                    user: User = Depends(current_user), db: Session = Depends(get_db)):
+                    user: User = Depends(verified_user), db: Session = Depends(get_db)):
     cred = _require_credential(db, user, provider_id)
     try:
         models = llm.list_models(provider_id, decrypt_secret(cred.key_enc), refresh=refresh)
@@ -99,7 +99,7 @@ def provider_models(provider_id: str, refresh: bool = Query(False),
 
 @router.put("/{provider_id}/model", response_model=ProviderOut)
 def select_model(provider_id: str, body: SelectModelIn,
-                 user: User = Depends(current_user), db: Session = Depends(get_db)):
+                 user: User = Depends(verified_user), db: Session = Depends(get_db)):
     cred = _require_credential(db, user, provider_id)
     try:
         llm.find_model(provider_id, decrypt_secret(cred.key_enc), body.model)
@@ -111,7 +111,7 @@ def select_model(provider_id: str, body: SelectModelIn,
 
 
 @router.put("/active", response_model=ProviderOut)
-def set_active(body: ActiveProviderIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def set_active(body: ActiveProviderIn, user: User = Depends(verified_user), db: Session = Depends(get_db)):
     cred = _require_credential(db, user, body.provider)
     if not cred.model:
         raise HTTPException(status.HTTP_409_CONFLICT, "Choose a model for this provider first")

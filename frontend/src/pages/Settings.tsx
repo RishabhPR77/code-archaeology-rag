@@ -1,15 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ExternalLink, KeyRound, LogOut, ShieldCheck, Trash2 } from "lucide-react";
-import { useState, type FormEvent } from "react";
-import { useNavigate } from "react-router";
+import { useEffect, useState, type FormEvent } from "react";
+import { useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
 
-import { GitHubIcon, ProviderMark } from "../components/brand";
+import { GitHubIcon, GoogleIcon, ProviderMark } from "../components/brand";
 import { ModelPicker } from "../components/ModelPicker";
 import { Badge, Button, Card, CardHeader, ConfirmDialog, ErrorNotice, Input, Skeleton } from "../components/ui";
 import { api } from "../lib/api";
 import { meKey, useSession, useSignOut } from "../lib/auth";
-import { providersKey, useProviders } from "../lib/queries";
+import { githubStatusKey, providersKey, useAuthConfig, useGitHubStatus, useProviders } from "../lib/queries";
 import type { Provider } from "../lib/types";
 import { cn, formatDate } from "../lib/utils";
 
@@ -163,20 +163,70 @@ function ProviderCard({ provider, defaultOpen }: { provider: Provider; defaultOp
   );
 }
 
+function GitHubConnection() {
+  const { user } = useSession();
+  const qc = useQueryClient();
+  const status = useGitHubStatus(user.github_connected);
+  const disconnect = useMutation({
+    mutationFn: api.disconnectGitHub,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: meKey });
+      qc.invalidateQueries({ queryKey: githubStatusKey });
+      toast.success("GitHub disconnected");
+    },
+  });
+  const s = status.data;
+  const shared = s?.installations ?? [];
+
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-4">
+      <div className="flex min-w-0 gap-3">
+        <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-surface-2"><GitHubIcon /></span>
+        <div className="min-w-0">
+          <p className="text-[13px] font-medium">GitHub</p>
+          <p className="mt-0.5 text-xs text-muted">
+            {!user.github_connected ? "Connect to ingest your own repositories, including private ones."
+              : status.isPending ? "Checking access…"
+              : s?.error ? s.error
+              : shared.length === 0 ? <>Connected as @{user.github_login} · no repositories shared yet</>
+              : <>Connected as @{user.github_login} · {shared.map((i) =>
+                  `${i.account} (${i.repository_selection === "all" ? "all repos" : "selected repos"})`).join(", ")}</>}
+          </p>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {user.github_connected && !s?.error ? (
+          <>
+            {s?.install_url && (
+              <a href={s.install_url}><Button size="sm" variant="secondary">Choose repositories</Button></a>
+            )}
+            <Button size="sm" variant="ghost" className="hover:text-danger" loading={disconnect.isPending}
+                    onClick={() => disconnect.mutate()}>Disconnect</Button>
+          </>
+        ) : (
+          <a href="/api/auth/github/login"><Button size="sm">{user.github_connected ? "Reconnect" : "Connect GitHub"}</Button></a>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AccountCard() {
   const { user } = useSession();
+  const config = useAuthConfig();
   const signOut = useSignOut();
   const navigate = useNavigate();
   return (
     <Card>
-      <CardHeader title="Account" description="Your sign-in details." />
+      <CardHeader title="Account" description="Your sign-in details and connected accounts." />
       <dl className="divide-y divide-border text-[13px]">
         {[
           ["Name", user.name || "—"],
           ["Email", user.email],
           ["Sign-in", (
-            <span className="flex flex-wrap items-center gap-2">
+            <span className="flex flex-wrap items-center justify-end gap-2">
               {user.has_password && <Badge>Email & password</Badge>}
+              {user.google_linked && <Badge><GoogleIcon className="size-3" /> Google</Badge>}
               {user.github_login && <Badge><GitHubIcon className="size-3" /> {user.github_login}</Badge>}
             </span>
           )],
@@ -188,6 +238,12 @@ function AccountCard() {
           </div>
         ))}
       </dl>
+      {config.data?.github_enabled && (
+        <div className="border-t border-border">
+          <p className="px-5 pt-4 text-[11px] font-semibold tracking-wider text-subtle uppercase">Connected accounts</p>
+          <GitHubConnection />
+        </div>
+      )}
       <div className="border-t border-border px-5 py-4">
         <Button variant="secondary" size="sm" onClick={async () => { await signOut(); navigate("/login"); }}>
           <LogOut className="size-3.5" /> Sign out
@@ -197,9 +253,28 @@ function AccountCard() {
   );
 }
 
+const GITHUB_NOTICES: Record<string, [kind: "success" | "error", message: string]> = {
+  connected: ["success", "GitHub connected"],
+  installed: ["success", "Repository access updated"],
+  taken: ["error", "That GitHub account is already linked to another Code Archaeologist account"],
+};
+
 export default function Settings() {
   const providers = useProviders();
   const { user } = useSession();
+  const [params, setParams] = useSearchParams();
+  const qc = useQueryClient();
+
+  // Messages from the GitHub redirect (?github=connected|installed|taken)
+  const notice = params.get("github");
+  useEffect(() => {
+    const entry = notice ? GITHUB_NOTICES[notice] : undefined;
+    if (!entry) return;
+    toast[entry[0]](entry[1]);
+    qc.invalidateQueries({ queryKey: githubStatusKey });
+    qc.invalidateQueries({ queryKey: meKey });
+    setParams({}, { replace: true });
+  }, [notice, qc, setParams]);
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 sm:py-10">

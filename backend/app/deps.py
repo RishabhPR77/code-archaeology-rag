@@ -20,7 +20,14 @@ def current_user(request: Request, db: Session = Depends(get_db)) -> User:
     return user
 
 
-def owned_repo(repo_id: str, user: User = Depends(current_user),
+def verified_user(user: User = Depends(current_user)) -> User:
+    """Everything beyond sign-up needs a confirmed email address."""
+    if not user.email_verified:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Confirm your email address to continue")
+    return user
+
+
+def owned_repo(repo_id: str, user: User = Depends(verified_user),
                db: Session = Depends(get_db)) -> Repo:
     repo = db.get(Repo, repo_id)
     if repo is None or repo.user_id != user.id:

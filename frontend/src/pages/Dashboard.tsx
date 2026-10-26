@@ -1,4 +1,4 @@
-import { ArrowRight, CheckCircle2, Circle, Clock, FolderGit2, GitCommitHorizontal, GitPullRequest, Plus } from "lucide-react";
+import { ArrowRight, CheckCircle2, Circle, Clock, FolderGit2, GitCommitHorizontal, GitPullRequest, Lock, Plus } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 
@@ -25,7 +25,10 @@ function RepoCard({ repo }: { repo: Repo }) {
           </div>
           <RepoStatusBadge repo={repo} />
         </div>
-        <h3 className="mt-4 truncate font-mono text-[13px] font-semibold">{repo.full_name}</h3>
+        <h3 className="mt-4 flex items-center gap-1.5 font-mono text-[13px] font-semibold">
+          {repo.is_private && <Lock className="size-3.5 shrink-0 text-warning" aria-label="Private repository" />}
+          <span className="truncate">{repo.full_name}</span>
+        </h3>
         <p className="mt-1 line-clamp-1 text-xs text-muted">
           {isIngesting(repo.status) ? repo.stage_message : repo.status === "failed" ? repo.error : `Ingested ${relativeTime(repo.ready_at)}`}
         </p>

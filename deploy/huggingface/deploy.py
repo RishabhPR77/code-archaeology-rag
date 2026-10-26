@@ -25,6 +25,9 @@ ENV_FILE = ROOT / "backend" / ".env"
 ALLOW = [
     "Dockerfile",
     "backend/requirements.txt",
+    "backend/alembic.ini",
+    "backend/migrations/*.py",
+    "backend/migrations/script.py.mako",
     "backend/app/*.py",
     "backend/ingestion/*.py",
     "backend/storage/*.py",

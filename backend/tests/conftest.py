@@ -24,10 +24,11 @@ import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app import llm  # noqa: E402
-from app.db import Base, engine  # noqa: E402
+from app.db import Base, engine, stamp_head  # noqa: E402
 from app.deps import auth_limiter  # noqa: E402
 from app.llm.base import ModelInfo, ProviderError  # noqa: E402
 from app.main import app  # noqa: E402
+from app.services import github as github_service  # noqa: E402
 from storage import vector_store  # noqa: E402
 
 
@@ -59,11 +60,16 @@ class FakeProvider:
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch):
     Base.metadata.drop_all(engine)
+    with engine.begin() as c:
+        c.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")
     Base.metadata.create_all(engine)
+    stamp_head()
     auth_limiter.hits.clear()
     llm._model_cache.clear()
     FakeProvider.calls = []
     monkeypatch.setitem(llm.PROVIDERS, "anthropic", FakeProvider())
+    # No test may reach GitHub; tests that care about visibility override this
+    monkeypatch.setattr(github_service, "repo_visibility", lambda full_name, token: "public")
     monkeypatch.setattr(vector_store, "_embed_query", _fake_embed)
     monkeypatch.setattr(vector_store, "_embed_docs", lambda texts: [_fake_embed(t) for t in texts])
     yield

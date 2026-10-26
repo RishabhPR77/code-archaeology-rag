@@ -11,6 +11,7 @@ import { NotFound } from "./pages/NotFound";
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Settings = lazy(() => import("./pages/Settings"));
 const RepoPage = lazy(() => import("./pages/repo/RepoPage"));
+const VerifyEmail = lazy(() => import("./pages/VerifyEmail"));
 
 function FullPageSpinner() {
   return (
@@ -25,7 +26,17 @@ function RequireAuth({ children }: { children: ReactNode }) {
   const location = useLocation();
   if (isPending) return <FullPageSpinner />;
   if (!data) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  if (!data.user.email_verified) return <Navigate to="/verify-email" replace />;
   return children;
+}
+
+// Signed in but email not confirmed yet
+function RequireUnverified({ children }: { children: ReactNode }) {
+  const { data, isPending } = useMe();
+  if (isPending) return <FullPageSpinner />;
+  if (!data) return <Navigate to="/login" replace />;
+  if (data.user.email_verified) return <Navigate to="/app" replace />;
+  return <Suspense fallback={<FullPageSpinner />}>{children}</Suspense>;
 }
 
 function GuestOnly({ children }: { children: ReactNode }) {
@@ -39,6 +50,7 @@ export const router = createBrowserRouter([
   { path: "/", element: <Landing /> },
   { path: "/login", element: <GuestOnly><Login /></GuestOnly> },
   { path: "/register", element: <GuestOnly><Register /></GuestOnly> },
+  { path: "/verify-email", element: <RequireUnverified><VerifyEmail /></RequireUnverified> },
   {
     path: "/app",
     element: (

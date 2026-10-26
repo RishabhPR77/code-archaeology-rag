@@ -7,15 +7,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import llm
+from app.config import get_settings
 from app.db import get_db
-from app.deps import current_user, owned_repo
+from app.deps import owned_repo, verified_user
 from app.llm import ProviderError
 from app.models import IngestEvent, Query, Repo, User
 from app.routers.providers import provider_http_error
 from app.schemas import (GITHUB_URL, AskIn, QueryOut, RepoIn, RepoOut, TimelineIn, TimelineOut,
                          as_utc)
 from app.security import decrypt_secret
-from app.services import ingest, rag
+from app.services import github, ingest, rag
 from app.services.users import credential, limits_for
 from retrieval import analytics
 
@@ -23,7 +24,8 @@ router = APIRouter(prefix="/api/repos", tags=["repos"])
 
 
 def repo_out(repo: Repo) -> RepoOut:
-    return RepoOut(id=repo.id, url=repo.url, full_name=repo.full_name, status=repo.status,
+    return RepoOut(id=repo.id, url=repo.url, full_name=repo.full_name, is_private=repo.is_private,
+                   status=repo.status,
                    stage_message=repo.stage_message, error=repo.error,
                    warnings=[w for w in repo.warnings.split("\n") if w],
                    max_commits=repo.max_commits, commit_count=repo.commit_count, pr_count=repo.pr_count,
@@ -69,18 +71,33 @@ def _llm_for(db: Session, user: User):
 
 # ── Repos ──────────────────────────────────────────────────────────
 @router.get("", response_model=list[RepoOut])
-def list_repos(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def list_repos(user: User = Depends(verified_user), db: Session = Depends(get_db)):
     repos = db.scalars(select(Repo).where(Repo.user_id == user.id).order_by(Repo.created_at.desc()))
     return [repo_out(r) for r in repos]
 
 
 @router.post("", response_model=RepoOut, status_code=status.HTTP_202_ACCEPTED)
 def create_repo(body: RepoIn, tasks: BackgroundTasks,
-                user: User = Depends(current_user), db: Session = Depends(get_db)):
+                user: User = Depends(verified_user), db: Session = Depends(get_db)):
     _check_ingest_allowed(db, user, body.max_commits, new_repo=True)
     m = GITHUB_URL.match(body.url)
     owner, name = m.group(2), m.group(3)
-    repo = Repo(user_id=user.id, url=f"https://github.com/{owner}/{name}", full_name=f"{owner}/{name}",
+    full_name = f"{owner}/{name}"
+
+    token = None
+    if user.github_token_enc:
+        try:
+            token = github.user_token(db, user)
+        except github.GitHubNotConnected:
+            token = None
+    visibility = github.repo_visibility(full_name, token or get_settings().github_token or None)
+    if visibility == "missing":
+        hint = ("If it's private, give the GitHub App access to it." if token
+                else "If it's private, connect GitHub first and choose it there.")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Couldn't find {full_name} on GitHub. {hint}")
+
+    repo = Repo(user_id=user.id, url=f"https://github.com/{full_name}", full_name=full_name,
+                is_private=visibility == "private",
                 namespace=f"u{user.id}_{uuid.uuid4().hex[:12]}", max_commits=body.max_commits)
     db.add(repo)
     db.add(IngestEvent(user_id=user.id))
@@ -96,7 +113,7 @@ def get_repo(repo: Repo = Depends(owned_repo)):
 
 @router.post("/{repo_id}/resync", response_model=RepoOut, status_code=status.HTTP_202_ACCEPTED)
 def resync_repo(tasks: BackgroundTasks, repo: Repo = Depends(owned_repo),
-                user: User = Depends(current_user), db: Session = Depends(get_db)):
+                user: User = Depends(verified_user), db: Session = Depends(get_db)):
     if repo.status not in ingest.TERMINAL:
         raise HTTPException(status.HTTP_409_CONFLICT, "This repository is already being ingested")
     _check_ingest_allowed(db, user, repo.max_commits, new_repo=False)
@@ -159,7 +176,7 @@ def _query_out(q: Query) -> QueryOut:
 
 @router.post("/{repo_id}/ask", response_model=QueryOut)
 def ask(body: AskIn, repo: Repo = Depends(owned_repo),
-        user: User = Depends(current_user), db: Session = Depends(get_db)):
+        user: User = Depends(verified_user), db: Session = Depends(get_db)):
     _chunks(repo)  # ensures the repo is ready
     provider, model, generate = _llm_for(db, user)
     try:
@@ -189,7 +206,7 @@ def clear_queries(repo: Repo = Depends(owned_repo), db: Session = Depends(get_db
 
 @router.post("/{repo_id}/timeline", response_model=TimelineOut)
 def timeline(body: TimelineIn, repo: Repo = Depends(owned_repo),
-             user: User = Depends(current_user), db: Session = Depends(get_db)):
+             user: User = Depends(verified_user), db: Session = Depends(get_db)):
     chunks = _chunks(repo)
     if not analytics.file_timeline(chunks, body.path):
         return TimelineOut(path=body.path, answer=None, provider=None, model=None, entries=[])

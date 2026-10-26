@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
 from app.db import init_db
-from app.routers import auth, providers, repos
+from app.routers import auth, github, providers, repos
 from app.services import ingest
 
 log = logging.getLogger(__name__)
@@ -49,6 +49,7 @@ def create_app() -> FastAPI:
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origin_list,
                        allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
     app.include_router(auth.router)
+    app.include_router(github.router)
     app.include_router(providers.router)
     app.include_router(repos.router)
 
