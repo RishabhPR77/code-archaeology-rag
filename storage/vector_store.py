@@ -49,12 +49,14 @@ class VectorStore:
         self.namespace = collection_name.replace("/", "_").replace("-", "_")
         self.index     = _get_index()
 
-    def ingest(self, chunks: list[dict], batch_size: int = 50):
-        all_ids = [c["id"] for c in chunks]
+    def ingest(self, chunks: list[dict], batch_size: int = 50, overwrite: bool = False):
+        # overwrite=True re-upserts existing ids, e.g. after chunks gain PR data
         existing_ids = set()
-        for i in range(0, len(all_ids), 1000):
-            resp = self.index.fetch(ids=all_ids[i:i+1000], namespace=self.namespace)
-            existing_ids.update(resp.vectors.keys())
+        if not overwrite:
+            all_ids = [c["id"] for c in chunks]
+            for i in range(0, len(all_ids), 1000):
+                resp = self.index.fetch(ids=all_ids[i:i+1000], namespace=self.namespace)
+                existing_ids.update(resp.vectors.keys())
 
         new = [c for c in chunks if c["id"] not in existing_ids]
         if not new:

@@ -27,8 +27,13 @@ from utils.rate_limiter import (
 # ---------------------------------------------------------------
 # Auto cleanup — delete Pinecone namespaces after TTL expires
 # ---------------------------------------------------------------
+import hmac
+import secrets
+import uuid
 import urllib.request
 import urllib.parse
+
+from pinecone.exceptions import NotFoundException
 
 TTL_SECONDS = 3 * 60 * 60  # 3 hours
 
@@ -45,43 +50,61 @@ def _redis(method: str, *args):
     except Exception:
         return None
 
+def chunks_path_for(key: str) -> str:
+    return f"./data/raw/{key}_chunks.json"
+
 def register_namespace_for_cleanup(namespace: str):
     """Store namespace in Redis with TTL so it gets cleaned up later."""
-    _redis("SET", f"ca:ns:{namespace}", "1")
-    _redis("EXPIRE", f"ca:ns:{namespace}", TTL_SECONDS)
+    _redis("SET", f"ca:ns:{namespace}", "1", "EX", TTL_SECONDS)
+    # Permanent set of everything registered — the TTL key alone vanishes on expiry
+    _redis("SADD", "ca:ns:all", namespace)
+
+def unregister_namespace(namespace: str):
+    """Stop tracking a namespace the user deleted by hand."""
+    _redis("DEL", f"ca:ns:{namespace}")
+    _redis("SREM", "ca:ns:all", namespace)
 
 def run_cleanup():
-    """On app load — scan for expired namespaces and delete from Pinecone."""
+    """On app load — delete Pinecone namespaces whose TTL key has expired."""
     try:
-        result = _redis("KEYS", "ca:ns:*")
-        if not result:
-            return
-        # Any key still in Redis is still alive — we track what WAS registered
-        # via a separate permanent set, then diff against live keys
-        all_registered = _redis("SMEMBERS", "ca:ns:all") or []
-        live = set(result)
-        live_ns = {k.replace("ca:ns:", "") for k in live}
-        for ns in all_registered:
-            if ns not in live_ns:
-                # TTL expired — delete from Pinecone
-                try:
-                    vs = VectorStore(collection_name=ns)
-                    vs.delete_namespace()
-                    _redis("SREM", "ca:ns:all", ns)
-                except Exception:
-                    pass
+        for ns in _redis("SMEMBERS", "ca:ns:all") or []:
+            # 0 = TTL expired. None = Redis unreachable, so never delete on doubt
+            if _redis("EXISTS", f"ca:ns:{ns}") != 0:
+                continue
+            try:
+                VectorStore(collection_name=ns).delete_namespace()
+            except NotFoundException:
+                pass  # already gone
+            except Exception:
+                continue  # Pinecone hiccup — retry on a later session
+            Path(chunks_path_for(ns)).unlink(missing_ok=True)
+            _redis("SREM", "ca:ns:all", ns)
     except Exception:
         pass
 
+ADMIN_TOKEN_TTL = 24 * 60 * 60  # 1 day
+
 def is_admin() -> bool:
     """Returns True if user has entered the admin password this session."""
-    # Check session state first, then query params
+    # Check session state first, then the admin token in query params (cross-tab)
     if st.session_state.get("is_admin", False):
         return True
-    if st.query_params.get("admin") == os.getenv("ADMIN_PASSWORD", ""):
+    token = st.query_params.get("admin")
+    if token and _redis("GET", f"ca:admin:{token}") == "1":
         st.session_state.is_admin = True
         return True
     return False
+
+def grant_admin(pw: str) -> bool:
+    """Check the password; on success put a random token (never the password) in the URL."""
+    expected = os.getenv("ADMIN_PASSWORD", "")
+    if not expected or not hmac.compare_digest(pw.encode(), expected.encode()):
+        return False
+    st.session_state.is_admin = True
+    token = secrets.token_urlsafe(16)
+    if _redis("SET", f"ca:admin:{token}", "1", "EX", ADMIN_TOKEN_TTL) == "OK":
+        st.query_params["admin"] = token
+    return True
 
 def _check_limits(commit_count=None):
     """Returns (allowed, msg). Bypasses limits for admin."""
@@ -378,10 +401,14 @@ def repo_key(repo_url: str) -> str:
     parts = repo_url.rstrip("/").split("/")
     return parts[-2] + "_" + parts[-1]
 
+def session_key(repo_url: str) -> str:
+    """Per-session key so users never share (or delete) each other's namespace."""
+    return f"{repo_key(repo_url)}_{st.session_state.session_id}"
+
 def ingest_repo(repo_url: str, max_commits: int) -> str:
-    key         = repo_key(repo_url)
-    clone_path  = f"./data/repos/{key}"
-    chunks_path = f"./data/raw/{key}_chunks.json"
+    key         = session_key(repo_url)
+    clone_path  = f"./data/repos/{repo_key(repo_url)}"  # clone is read-only, safe to share
+    chunks_path = chunks_path_for(key)
 
     if not Path(clone_path).exists():
         st.write(f"Cloning {repo_url}...")
@@ -421,16 +448,19 @@ def ingest_repo(repo_url: str, max_commits: int) -> str:
         "key":         key,
         "chunks_path": chunks_path,
         "clone_path":  clone_path,
-        "commits":     len(chunks)
+        "commits":     len(chunks),
+        "max_commits": max_commits,
     }
     # Register for auto cleanup after TTL expires
     register_namespace_for_cleanup(key)
-    _redis("SADD", "ca:ns:all", key)
     return key
 
 # ---------------------------------------------------------------
 # State
 # ---------------------------------------------------------------
+if "session_id" not in st.session_state:
+    st.session_state.session_id = uuid.uuid4().hex[:8]
+
 if "page" not in st.session_state:
     st.session_state.page = "ingest"
     run_cleanup()  # clean up expired namespaces on fresh session
@@ -472,11 +502,8 @@ with admin_col:
     if not is_admin():
         pw = st.text_input("", placeholder="admin", type="password",
                            label_visibility="collapsed", key="admin_pw_input")
-        if pw:
-            if pw == os.getenv("ADMIN_PASSWORD", ""):
-                st.session_state.is_admin = True
-                st.query_params["admin"] = pw
-                st.rerun()
+        if pw and grant_admin(pw):
+            st.rerun()
     else:
         st.markdown('<div style="font-size:11px;color:#1D9E75;padding-top:6px;">✓ admin</div>',
                     unsafe_allow_html=True)
@@ -573,15 +600,12 @@ if page == "ingest":
                     with c1:
                         if st.button("Yes", key=f"delete_yes_{k}"):
                             try:
-                                from storage.vector_store import VectorStore
                                 vs = VectorStore(collection_name=k)
                                 vs.delete_namespace()
                             except Exception:
                                 pass
-                            import shutil
-                            clone_path = v.get("clone_path")
-                            if clone_path and Path(clone_path).exists():
-                                shutil.rmtree(clone_path, ignore_errors=True)
+                            unregister_namespace(k)
+                            # Clone is shared with other sessions, so it stays
                             chunks_path = v.get("chunks_path")
                             if chunks_path and Path(chunks_path).exists():
                                 Path(chunks_path).unlink(missing_ok=True)
@@ -912,7 +936,11 @@ elif page == "prs":
                 st.write(f"Fetched {len(prs)} PRs. Rebuilding chunks...")
 
                 clone_path = registry[active_key]["clone_path"]
-                commits = load_commits(clone_path, max_count=300)
+                if not Path(clone_path).exists():
+                    git.Repo.clone_from(repo_url, clone_path)
+                # Rebuild the same commit range that was originally ingested
+                max_commits = registry[active_key].get("max_commits", registry[active_key]["commits"])
+                commits = load_commits(clone_path, max_count=max_commits)
                 chunks = build_chunks(commits, pull_requests=prs)
 
                 st.write("Saving updated chunks...")
@@ -921,7 +949,8 @@ elif page == "prs":
 
                 st.write("Updating Pinecone index...")
                 store = VectorStore(collection_name=active_key)
-                store.ingest(chunks)
+                store.ingest(chunks, overwrite=True)
+                registry[active_key]["commits"] = len(chunks)
 
             st.success(f"Done. {len(prs)} PRs fetched. Reloading page...")
             st.rerun()
