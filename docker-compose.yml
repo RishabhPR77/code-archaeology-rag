@@ -1,0 +1,43 @@
+# Production-like stack: PostgreSQL + FastAPI + React (nginx) on http://localhost:8080
+# 1. cp backend/.env.example backend/.env and fill in SECRET_KEY / ENCRYPTION_KEY
+# 2. docker compose up --build
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: archaeologist
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-archaeologist}
+      POSTGRES_DB: code_archaeologist
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U archaeologist -d code_archaeologist"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build: ./backend
+    env_file: ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://archaeologist:${POSTGRES_PASSWORD:-archaeologist}@db:5432/code_archaeologist
+      FRONTEND_URL: ${PUBLIC_URL:-http://localhost:8080}
+      DATA_DIR: /app/data
+    volumes:
+      - apidata:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  apidata:
