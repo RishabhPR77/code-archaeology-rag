@@ -26,7 +26,9 @@ def _make_engine():
             cur.close()
 
         return engine
-    return create_engine(url, pool_pre_ping=True)
+    # connect_timeout bounds each address attempt, so a dead IPv6 route falls back to IPv4
+    # instead of hanging; pre-ping replaces connections Neon closed while scaled to zero
+    return create_engine(url, pool_pre_ping=True, connect_args={"connect_timeout": 10})
 
 
 engine = _make_engine()

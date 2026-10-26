@@ -221,6 +221,44 @@ The app requests the `read:user user:email` scopes. A GitHub account with a veri
 
 ## Deployment
 
+### Free: Hugging Face Spaces + Neon + Pinecone
+
+The root [`Dockerfile`](Dockerfile) builds a single container in which FastAPI serves both the API and the React app on port 7860. That matches what a Hugging Face Docker Space expects. The free CPU Basic hardware (2 vCPU, 16 GB RAM) runs the local embedding model comfortably; the API needs roughly 0.6 to 0.9 GB, which rules out 512 MB free tiers.
+
+A Space's disk is wiped on every restart, so state lives elsewhere: **Neon** (free Postgres) for the database and **Pinecone** for vectors.
+
+1. **Database.** Create a free project at [neon.com](https://neon.com) and copy its connection string (`postgresql://…?sslmode=require`). The app converts it to the psycopg driver automatically.
+2. **Space.** On Hugging Face, choose **New → Space**, name it (for example `code-archaeologist`), pick the **Docker** SDK and **Blank** template, and keep **CPU Basic (free)** hardware.
+3. **Secrets.** In the Space's **Settings → Variables and secrets**, add:
+
+   | Name | Type | Value |
+   |---|---|---|
+   | `SECRET_KEY` | Secret | output of `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
+   | `ENCRYPTION_KEY` | Secret | output of `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+   | `DATABASE_URL` | Secret | the Neon connection string |
+   | `PINECONE_API_KEY` | Secret | your Pinecone key |
+   | `GITHUB_TOKEN` | Secret | a GitHub token with no scopes (public data only) |
+   | `ENVIRONMENT` | Variable | `production` |
+   | `FRONTEND_URL` | Variable | `https://<username>-<space-name>.hf.space` |
+
+4. **Deploy** from this repository, using the backend's Python environment (it already has `huggingface_hub`):
+
+```bash
+backend/.venv/Scripts/python deploy/huggingface/deploy.py <username>/<space-name>
+```
+
+On macOS or Linux, the interpreter is `backend/.venv/bin/python`. The first run asks for a Hugging Face token with **write** access, which you create at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens).
+
+The script uploads only an allowlist of source files, so `.env` files and local data never leave your machine. The Space then builds, which takes about 10 minutes the first time.
+
+5. **Open the app** at `https://<username>-<space-name>.hf.space`. On the huggingface.co Space page the app runs inside a frame, where browsers won't keep the login cookie, so the app shows a link to open it in its own tab.
+
+For **Sign in with GitHub**, create an OAuth app whose callback is `https://<username>-<space-name>.hf.space/api/auth/github/callback` and add `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` as secrets.
+
+Free Spaces sleep after 48 hours without visitors and take a short while to wake. Re-run the deploy script whenever you want to ship changes.
+
+### Self-hosted: docker compose
+
 The repository includes a production-style stack: PostgreSQL, the FastAPI API and nginx serving the built React app, with the API proxied under the same origin.
 
 1. Create `backend/.env` from the example and fill in `SECRET_KEY` and `ENCRYPTION_KEY`.

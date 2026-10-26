@@ -3,8 +3,12 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
 from app.db import init_db
@@ -52,7 +56,37 @@ def create_app() -> FastAPI:
     def health():
         return {"status": "ok"}
 
+    if settings.static_dir:
+        _serve_frontend(app, settings.static_dir)
     return app
+
+
+def _serve_frontend(app: FastAPI, static_dir: Path):
+    """Serve the built React app from the API itself — one origin, one port."""
+    root = static_dir.resolve()
+    index = root / "index.html"
+    if not index.is_file():
+        raise RuntimeError(f"STATIC_DIR={static_dir} has no index.html — build the frontend first")
+
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        return response
+
+    # Hashed asset names, so they can be cached forever
+    app.mount("/assets", StaticFiles(directory=root / "assets"), name="assets")
+
+    @app.get("/{path:path}", include_in_schema=False)
+    def spa(path: str):
+        if path.startswith("api/"):
+            raise HTTPException(404, "Not found")
+        file = (root / path).resolve()
+        if path and file.is_file() and file.is_relative_to(root):
+            return FileResponse(file)
+        # Client-side routes all load the app shell
+        return FileResponse(index, headers={"Cache-Control": "no-cache"})
 
 
 app = create_app()

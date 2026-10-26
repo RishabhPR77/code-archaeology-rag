@@ -7,6 +7,7 @@ import { RouterProvider } from "react-router/dom";
 import { Toaster } from "sonner";
 
 import { router } from "./App";
+import { FrameNotice } from "./components/FrameNotice";
 import { ApiError } from "./lib/api";
 import { meKey } from "./lib/auth";
 
@@ -29,6 +30,7 @@ const queryClient = new QueryClient({
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
+      <FrameNotice />
       <RouterProvider router={router} />
       <Toaster
         position="bottom-right"

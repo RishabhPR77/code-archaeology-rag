@@ -22,6 +22,7 @@ class Settings(BaseSettings):
 
     data_dir: Path = BACKEND_DIR / "data"
     database_url: str = ""                        # empty -> SQLite file in data_dir
+    static_dir: Path | None = None                # built React app to serve (single-container deploys)
 
     # Where the React app lives — used for OAuth redirects and CORS
     frontend_url: str = "http://localhost:5173"
@@ -47,7 +48,14 @@ class Settings(BaseSettings):
 
     @property
     def db_url(self) -> str:
-        return self.database_url or f"sqlite:///{(self.data_dir / 'app.db').as_posix()}"
+        url = self.database_url
+        if not url:
+            return f"sqlite:///{(self.data_dir / 'app.db').as_posix()}"
+        # Hosted Postgres (Neon, Supabase...) hands out driverless URLs; use psycopg 3
+        for prefix in ("postgres://", "postgresql://"):
+            if url.startswith(prefix):
+                return "postgresql+psycopg://" + url.removeprefix(prefix)
+        return url
 
     @property
     def is_production(self) -> bool:
