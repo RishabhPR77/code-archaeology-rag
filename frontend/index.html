@@ -1,17 +1,16 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Ask why any code was written and get grounded, cited answers from its Git history." />
-    <meta name="theme-color" content="#0b0b10" />
+    <meta name="theme-color" content="#ffffff" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Code Archaeologist</title>
     <script>
       // Apply the saved theme before first paint to avoid a flash
       try {
-        var t = localStorage.getItem("ca-theme");
-        if (t === "light") document.documentElement.classList.remove("dark");
+        if (localStorage.getItem("ca-mode") === "dark") document.documentElement.classList.add("dark");
       } catch (e) {}
     </script>
   </head>

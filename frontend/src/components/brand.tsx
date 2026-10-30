@@ -45,13 +45,17 @@ export function useTheme() {
   const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"));
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#0e1719" : "#ffffff");
+  }, [dark]);
+  const toggle = () => {
     try {
-      localStorage.setItem("ca-theme", dark ? "dark" : "light");
+      localStorage.setItem("ca-mode", dark ? "light" : "dark");
     } catch {
       /* storage unavailable — theme still applies for this visit */
     }
-  }, [dark]);
-  return { dark, toggle: () => setDark((d) => !d) };
+    setDark(!dark);
+  };
+  return { dark, toggle };
 }
 
 export function ThemeToggle({ className }: { className?: string }) {

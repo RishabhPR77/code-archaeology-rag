@@ -1,9 +1,10 @@
 import {
-  ArrowRight, BarChart3, FileClock, GitMerge, KeyRound, Network, PlayCircle, Search, ShieldCheck, Sparkles, Users,
+  ArrowRight, BarChart3, FileClock, GitMerge, KeyRound, Network, PlayCircle, Search, ShieldCheck, Users,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 
+import { AnswerPreview } from "../components/AnswerPreview";
 import { Logo, ProviderMark, ThemeToggle } from "../components/brand";
 import { ProductDemo } from "../components/ProductDemo";
 import { Button } from "../components/ui";
@@ -12,18 +13,24 @@ import type { ProviderId } from "../lib/types";
 import { PROVIDER_NAMES } from "../lib/utils";
 
 const FEATURES: { icon: ReactNode; title: string; body: string }[] = [
-  { icon: <Search className="size-4" />, title: "Grounded answers",
-    body: "Hybrid dense + BM25 retrieval finds the exact commits, diffs and PR discussions behind a change, and every answer cites them." },
+  { icon: <Search className="size-4" />, title: "Answers with sources",
+    body: "Every answer links to the exact commits, diffs and pull requests it came from." },
   { icon: <GitMerge className="size-4" />, title: "Pull request context",
-    body: "PR descriptions, review comments and linked issues are merged into each commit — that's where the real “why” lives." },
+    body: "PR descriptions, review comments and linked issues are read alongside each commit." },
   { icon: <FileClock className="size-4" />, title: "File timelines",
-    body: "Trace how any file evolved: the phases it went through, who drove them and the patterns that keep recurring." },
+    body: "See how any file changed over time and who drove each change." },
   { icon: <Network className="size-4" />, title: "Hidden coupling",
-    body: "Co-change analysis surfaces files that always move together — dependencies static analysis can't see." },
+    body: "Find files that always change together, even when no import connects them." },
   { icon: <BarChart3 className="size-4" />, title: "Hot spots",
-    body: "See where churn concentrates, which commit types dominate and how activity changes week to week." },
+    body: "See where changes concentrate and how activity moves week to week." },
   { icon: <Users className="size-4" />, title: "Knowledge map",
-    body: "Know who owns what. If a contributor left tomorrow, see exactly which parts of the codebase they carried." },
+    body: "See who owns what, and which parts of the code depend on one person." },
+];
+
+const STEPS = [
+  ["Add your API key", "Paste a key from any supported provider and pick a model from its live list."],
+  ["Connect a repository", "Choose one of your GitHub repositories or paste a public URL."],
+  ["Ask your question", "Ask in plain English and get an answer with links to the sources."],
 ];
 
 const PROVIDERS: ProviderId[] = ["anthropic", "openai", "gemini", "groq", "openrouter"];
@@ -34,12 +41,12 @@ export function Landing() {
 
   return (
     <div className="min-h-full overflow-x-hidden">
-      <header className="sticky top-0 z-30 border-b border-border/60 bg-bg/75 backdrop-blur-md">
+      <header className="sticky top-0 z-30 border-b border-border bg-surface/90 backdrop-blur-md">
         <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4 sm:gap-6 sm:px-6">
           <Logo />
-          <nav className="hidden items-center gap-6 text-[13px] text-muted md:flex">
+          <nav className="hidden items-center gap-6 text-[13px] font-medium text-muted md:ml-4 md:flex">
+            <a href="#demo" className="hover:text-text">Demo</a>
             <a href="#features" className="hover:text-text">Features</a>
-            <a href="#how" className="hover:text-text">How it works</a>
             <a href="#providers" className="hover:text-text">Providers</a>
           </nav>
           <div className="flex-1" />
@@ -55,103 +62,110 @@ export function Landing() {
         </div>
       </header>
 
-      <section className="relative px-4 pt-20 pb-24 sm:px-6 sm:pt-28">
-        <div className="grid-bg absolute inset-0 -z-10 opacity-60" aria-hidden />
-        <div className="mx-auto max-w-3xl text-center animate-fade-up">
-          <span className="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1 text-xs text-muted">
-            <Sparkles className="size-3.5 text-accent" /> Bring your own model — 5 providers supported
-          </span>
-          <h1 className="mt-6 text-4xl font-semibold tracking-tight text-balance sm:text-6xl">
-            Ask <span className="text-accent">why</span> your code is the way it is.
-          </h1>
-          <p className="mx-auto mt-5 max-w-xl text-base text-muted text-balance sm:text-lg">
-            Code Archaeologist turns a repository's commits, pull requests and code reviews into a searchable
-            memory — and answers with citations, not guesses.
-          </p>
-          <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
-            <Link to={signedIn ? "/app" : "/register"}>
-              <Button size="lg">{signedIn ? "Open your workspace" : "Start for free"} <ArrowRight className="size-4" /></Button>
-            </Link>
-            <a href="#demo">
-              <Button size="lg" variant="outline"><PlayCircle className="size-4" /> See how it works</Button>
-            </a>
+      <section className="bg-surface px-4 pt-12 pb-16 sm:px-6 lg:pt-20 lg:pb-24">
+        <div className="mx-auto grid max-w-6xl items-center gap-10 lg:grid-cols-2 lg:gap-14">
+          <div className="animate-fade-up">
+            <h1 className="text-4xl leading-[1.1] font-extrabold tracking-tight text-balance sm:text-5xl lg:text-[3.5rem]">
+              Find out why any code was written.
+            </h1>
+            <p className="mt-5 max-w-xl text-lg leading-relaxed text-muted">
+              Connect a GitHub repository and ask about it in plain English. Answers come from its commits,
+              pull requests and code reviews, with links to the sources.
+            </p>
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+              <Link to={signedIn ? "/app" : "/register"}>
+                <Button size="lg" className="w-full sm:w-auto">{signedIn ? "Open your workspace" : "Start for free"} <ArrowRight className="size-4" /></Button>
+              </Link>
+              <a href="#demo">
+                <Button size="lg" variant="outline" className="w-full sm:w-auto"><PlayCircle className="size-4" /> Watch the demo</Button>
+              </a>
+            </div>
+            <p className="mt-6 text-[13px] text-subtle">
+              Uses your own API key from Anthropic, OpenAI, Gemini, Groq or OpenRouter.
+            </p>
           </div>
-        </div>
-        <div id="demo" className="mt-16 scroll-mt-24">
-          <ProductDemo />
+          <div className="min-w-0 rounded-3xl bg-accent-soft p-3 sm:p-6">
+            <AnswerPreview />
+          </div>
         </div>
       </section>
 
-      <section id="features" className="border-t border-border bg-surface/50 px-4 py-24 sm:px-6">
+      <section id="demo" className="scroll-mt-16 border-t border-border px-4 py-16 sm:px-6 lg:py-20">
         <div className="mx-auto max-w-6xl">
-          <div className="max-w-2xl">
-            <p className="text-[13px] font-semibold text-accent">Features</p>
-            <h2 className="mt-2 text-3xl font-semibold tracking-tight">Everything Git remembers, finally reachable.</h2>
-            <p className="mt-3 text-muted">The knowledge of why a decision was made is buried in history. These tools dig it out.</p>
+          <div className="mx-auto max-w-2xl text-center">
+            <p className="text-[13px] font-semibold text-accent">Demo</p>
+            <h2 className="mt-2 text-3xl font-bold tracking-tight">See how it works.</h2>
           </div>
-          <div className="mt-12 grid gap-px overflow-hidden rounded-2xl border border-border bg-border sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-10"><ProductDemo /></div>
+        </div>
+      </section>
+
+      <section id="features" className="scroll-mt-16 border-t border-border bg-surface px-4 py-16 sm:px-6 lg:py-20">
+        <div className="mx-auto max-w-6xl">
+          <p className="text-[13px] font-semibold text-accent">Features</p>
+          <h2 className="mt-2 text-3xl font-bold tracking-tight">More than a chatbot for your repo.</h2>
+          <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {FEATURES.map((f) => (
-              <div key={f.title} className="bg-surface p-6">
+              <div key={f.title} className="rounded-xl border border-border bg-surface p-6 transition-colors hover:border-accent/50">
                 <div className="grid size-9 place-items-center rounded-lg bg-accent-soft text-accent">{f.icon}</div>
-                <h3 className="mt-4 text-[15px] font-semibold">{f.title}</h3>
-                <p className="mt-1.5 text-[13px] leading-relaxed text-muted">{f.body}</p>
+                <h3 className="mt-4 text-[15px] font-bold">{f.title}</h3>
+                <p className="mt-1.5 text-sm leading-relaxed text-muted">{f.body}</p>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      <section id="how" className="px-4 py-24 sm:px-6">
+      <section id="how" className="border-t border-border px-4 py-16 sm:px-6 lg:py-20">
         <div className="mx-auto max-w-6xl">
           <p className="text-[13px] font-semibold text-accent">How it works</p>
-          <h2 className="mt-2 text-3xl font-semibold tracking-tight">Three steps from URL to answers.</h2>
-          <ol className="mt-12 grid gap-6 md:grid-cols-3">
-            {[
-              ["Connect your model", "Add an API key from any supported provider and pick the exact model you want from its live catalogue."],
-              ["Ingest a repository", "Paste a public GitHub URL. Commits, diffs, PRs and reviews are chunked, embedded and indexed in minutes."],
-              ["Ask anything", "Ask in plain English. Answers cite the commits they come from, with links straight to GitHub."],
-            ].map(([title, body], i) => (
-              <li key={title} className="rounded-2xl border border-border bg-surface p-6">
-                <span className="font-mono text-xs text-subtle">0{i + 1}</span>
-                <h3 className="mt-3 text-[15px] font-semibold">{title}</h3>
-                <p className="mt-1.5 text-[13px] leading-relaxed text-muted">{body}</p>
+          <h2 className="mt-2 text-3xl font-bold tracking-tight">Three steps to your first answer.</h2>
+          <ol className="mt-10 grid gap-8 md:grid-cols-3">
+            {STEPS.map(([title, body], i) => (
+              <li key={title}>
+                <span className="grid size-9 place-items-center rounded-full bg-accent text-sm font-bold text-accent-fg">{i + 1}</span>
+                <h3 className="mt-4 text-[15px] font-bold">{title}</h3>
+                <p className="mt-1.5 text-sm leading-relaxed text-muted">{body}</p>
               </li>
             ))}
           </ol>
         </div>
       </section>
 
-      <section id="providers" className="border-t border-border bg-surface/50 px-4 py-24 sm:px-6">
-        <div className="mx-auto grid max-w-6xl items-center gap-12 lg:grid-cols-2">
+      <section id="providers" className="scroll-mt-16 border-t border-border bg-surface px-4 py-16 sm:px-6 lg:py-20">
+        <div className="mx-auto grid max-w-6xl items-center gap-10 lg:grid-cols-2 lg:gap-14">
           <div>
-            <p className="text-[13px] font-semibold text-accent">Your model, your key</p>
-            <h2 className="mt-2 text-3xl font-semibold tracking-tight">Use the provider you already trust.</h2>
-            <p className="mt-3 text-muted">
-              Models are loaded live from each provider's official API with your key, so new releases show up the day
-              they ship. Switch providers any time.
+            <p className="text-[13px] font-semibold text-accent">Your key</p>
+            <h2 className="mt-2 text-3xl font-bold tracking-tight">Use the model you already pay for.</h2>
+            <p className="mt-3 leading-relaxed text-muted">
+              Models are loaded live from each provider with your key, so new releases show up the day they ship.
             </p>
-            <ul className="mt-6 space-y-3 text-[13px] text-muted">
+            <ul className="mt-6 space-y-3 text-sm text-muted">
               <li className="flex gap-2.5"><KeyRound className="mt-0.5 size-4 shrink-0 text-accent" /> Keys are encrypted at rest and never sent back to the browser.</li>
-              <li className="flex gap-2.5"><ShieldCheck className="mt-0.5 size-4 shrink-0 text-accent" /> Each key is verified against the provider before it's saved.</li>
+              <li className="flex gap-2.5"><ShieldCheck className="mt-0.5 size-4 shrink-0 text-accent" /> Each key is verified with the provider before it's saved.</li>
             </ul>
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {PROVIDERS.map((p) => (
-              <div key={p} className="flex items-center gap-3 rounded-xl border border-border bg-surface p-4">
+              <div key={p} className="flex items-center gap-3 rounded-xl border border-border bg-surface p-4 sm:last:col-span-2">
                 <ProviderMark id={p} />
-                <span className="text-sm font-medium">{PROVIDER_NAMES[p]}</span>
+                <span className="text-sm font-semibold">{PROVIDER_NAMES[p]}</span>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      <section className="px-4 py-24 sm:px-6">
-        <div className="mx-auto max-w-4xl rounded-3xl border border-border bg-surface px-6 py-14 text-center shadow-card">
-          <h2 className="text-3xl font-semibold tracking-tight text-balance">Stop guessing what the last developer meant.</h2>
-          <p className="mx-auto mt-3 max-w-lg text-muted">Create an account, connect a model and ingest your first repository in a few minutes.</p>
-          <Link to={signedIn ? "/app" : "/register"} className="mt-8 inline-block">
-            <Button size="lg">{signedIn ? "Open your workspace" : "Create your account"} <ArrowRight className="size-4" /></Button>
+      <section className="px-4 py-16 sm:px-6 lg:py-20">
+        <div className="mx-auto flex max-w-6xl flex-col items-start justify-between gap-6 rounded-3xl bg-[#065f46] px-6 py-10 text-white sm:px-10 sm:py-12 md:flex-row md:items-center">
+          <div>
+            <h2 className="text-3xl font-bold tracking-tight text-balance">Ask your first question in a few minutes.</h2>
+            <p className="mt-2 text-white/80">Create an account, add a key and connect a repository.</p>
+          </div>
+          <Link to={signedIn ? "/app" : "/register"} className="shrink-0">
+            <button className="inline-flex h-12 cursor-pointer items-center gap-2 rounded-lg bg-white px-6 text-[15px] font-semibold text-[#065f46] transition-colors hover:bg-white/90">
+              {signedIn ? "Open your workspace" : "Create your account"} <ArrowRight className="size-4" />
+            </button>
           </Link>
         </div>
       </section>

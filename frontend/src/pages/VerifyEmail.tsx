@@ -50,8 +50,7 @@ export default function VerifyEmail() {
   };
 
   return (
-    <div className="relative flex min-h-full flex-col">
-      <div className="grid-bg absolute inset-0 -z-10 opacity-50" aria-hidden />
+    <div className="flex min-h-full flex-col bg-surface">
       <header className="flex items-center justify-between px-4 py-4 sm:px-8">
         <Logo />
         <ThemeToggle />

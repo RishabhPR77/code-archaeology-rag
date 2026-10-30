@@ -30,7 +30,7 @@ const PROVIDERS = [
   { id: "gemini", name: "Google Gemini" }, { id: "groq", name: "Groq" },
   { id: "openrouter", name: "OpenRouter" },
 ] as const;
-const MODELS = ["llama-3.3-70b-versatile", "openai/gpt-oss-120b", "openai/gpt-oss-20b"];
+const MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"];
 const REPOS = [
   { name: "acme/storefront", private: true }, { name: "acme/payments-api", private: true },
   { name: "acme/docs", private: false },
@@ -60,7 +60,7 @@ const START: DemoState = {
 
 // What each scene looks like when it has finished — used for reduced motion
 const FINAL: Record<number, Partial<DemoState>> = {
-  0: { expanded: true, keyText: "gsk_••••••••••••••••", connected: true, model: MODELS[1] },
+  0: { expanded: true, keyText: "sk-ant-••••••••••••••••", connected: true, model: MODELS[1] },
   1: { picked: REPOS[0].name, ingesting: true, stage: STAGES.length - 1 },
   2: { question: QUESTION, asked: true, answer: ANSWER.length, sources: SOURCES.length },
   3: { grow: true },
@@ -159,17 +159,17 @@ export function ProductDemo() {
 
     const scripts = [
       async () => {  // Connect
-        await move("provider-groq");
+        await move("provider-anthropic");
         await click();
         patch({ expanded: true });
         await move("key-input");
         await click();
-        await type("gsk_••••••••••••••••", (keyText) => patch({ keyText }), 40);
+        await type("sk-ant-••••••••••••••••", (keyText) => patch({ keyText }), 40);
         await move("verify");
         await click();
         patch({ saving: true });
         await sleep(900);
-        patch({ saving: false, connected: true, toast: "Groq connected · 12 models available" });
+        patch({ saving: false, connected: true, toast: "Anthropic connected · models loaded" });
         await move("model-1");
         await click();
         patch({ model: MODELS[1] });
@@ -245,7 +245,6 @@ export function ProductDemo() {
   return (
     <div className="mx-auto w-full max-w-[880px]">
       <div ref={outer} className="relative w-full" style={{ height: H * scale }}>
-        <div className="absolute -inset-x-10 -top-10 -bottom-4 rounded-[2rem] bg-accent/10 blur-3xl" aria-hidden />
         <div
           ref={canvas}
           aria-hidden
@@ -336,16 +335,16 @@ function ConnectScene({ s, t }: { s: DemoState; t: Reg }) {
       <p className="mt-0.5 text-[12px] text-muted">Your own API key is used for every answer.</p>
       <div className="mt-4 space-y-2">
         {PROVIDERS.map((p) => {
-          const groq = p.id === "groq";
-          const open = groq && s.expanded;
+          const chosen = p.id === "anthropic";
+          const open = chosen && s.expanded;
           return (
             <div key={p.id} className={cn("rounded-xl border bg-surface transition-colors", open ? "border-accent/40" : "border-border")}>
-              <div ref={groq ? t("provider-groq") : undefined} className="flex items-center gap-3 px-3 py-2">
+              <div ref={chosen ? t("provider-anthropic") : undefined} className="flex items-center gap-3 px-3 py-2">
                 <ProviderMark id={p.id} className="size-7 text-[10px]" />
                 <span className="text-[13px] font-medium">{p.name}</span>
                 <span className={cn("rounded-md px-1.5 py-0.5 text-[10px] font-medium",
-                  groq && s.connected ? "bg-success-soft text-success" : "bg-surface-2 text-subtle")}>
-                  {groq && s.connected ? (s.model ? "Active" : "Connected") : "Not connected"}
+                  chosen && s.connected ? "bg-success-soft text-success" : "bg-surface-2 text-subtle")}>
+                  {chosen && s.connected ? (s.model ? "Active" : "Connected") : "Not connected"}
                 </span>
               </div>
               {open && (
@@ -353,7 +352,7 @@ function ConnectScene({ s, t }: { s: DemoState; t: Reg }) {
                   {!s.connected ? (
                     <div className="flex gap-2">
                       <span ref={t("key-input")} className="flex h-8 flex-1 items-center rounded-lg border border-accent bg-bg px-3 font-mono text-[12px]">
-                        {s.keyText || <span className="text-subtle">Paste your Groq API key</span>}
+                        {s.keyText || <span className="text-subtle">Paste your Anthropic API key</span>}
                         <span className="ml-0.5 h-4 w-px animate-pulse bg-text" />
                       </span>
                       <Btn primary r={t("verify")}>
@@ -498,8 +497,8 @@ function AskScene({ s, t }: { s: DemoState; t: Reg }) {
             <div className="ml-auto w-fit max-w-[70%] rounded-2xl rounded-br-md bg-accent px-3.5 py-2 text-[12px] text-accent-fg animate-fade-up">{QUESTION}</div>
             <div className="rounded-xl border border-border bg-surface p-4 animate-fade-up">
               <div className="mb-2 flex items-center gap-2 text-[10px] text-subtle">
-                <ProviderMark id="groq" className="size-4 text-[7px]" />
-                <span className="font-mono">openai/gpt-oss-120b</span>
+                <ProviderMark id="anthropic" className="size-4 text-[7px]" />
+                <span className="font-mono">{MODELS[1]}</span>
               </div>
               {s.thinking ? (
                 <div className="flex gap-1 py-2">

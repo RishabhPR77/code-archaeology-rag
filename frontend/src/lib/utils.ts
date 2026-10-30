@@ -35,13 +35,13 @@ export const shortSha = (sha: string) => sha.slice(0, 7);
 export const basename = (path: string) => path.split("/").pop() ?? path;
 
 export const COMMIT_TYPES: Record<CommitType, { label: string; color: string }> = {
-  feat: { label: "Feature", color: "#22b07d" },
-  fix: { label: "Fix", color: "#e5534b" },
-  refactor: { label: "Refactor", color: "#8b7cf6" },
-  docs: { label: "Docs", color: "#d39b2a" },
-  test: { label: "Test", color: "#2bb3c0" },
-  chore: { label: "Chore", color: "#8a8a99" },
-  other: { label: "Other", color: "#4f8ef7" },
+  feat: { label: "Feature", color: "#1a9a6c" },
+  fix: { label: "Fix", color: "#d9483b" },
+  refactor: { label: "Refactor", color: "#2f7fd6" },
+  docs: { label: "Docs", color: "#cc8f1f" },
+  test: { label: "Test", color: "#16a3a3" },
+  chore: { label: "Chore", color: "#84919e" },
+  other: { label: "Other", color: "#6b7fa3" },
 };
 
 export const PROVIDER_STYLE: Record<ProviderId, { mono: string; color: string }> = {

@@ -23,7 +23,7 @@ function Sidebar({ onNavigate, onNewRepo }: { onNavigate: () => void; onNewRepo:
 
   const navClass = ({ isActive }: { isActive: boolean }) =>
     cn("flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium transition-colors",
-      isActive ? "bg-surface-2 text-text" : "text-muted hover:bg-surface-2 hover:text-text");
+      isActive ? "bg-accent-soft text-accent" : "text-muted hover:bg-surface-2 hover:text-text");
 
   return (
     <div className="flex h-full flex-col">

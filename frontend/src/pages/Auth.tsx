@@ -3,6 +3,7 @@ import { Eye, EyeOff } from "lucide-react";
 import { useState, type FormEvent, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 
+import { AnswerPreview } from "../components/AnswerPreview";
 import { GitHubIcon, GoogleIcon, Logo, ThemeToggle } from "../components/brand";
 import { Button, ErrorNotice, Input, Label } from "../components/ui";
 import { api } from "../lib/api";
@@ -26,24 +27,31 @@ function AuthShell({ title, subtitle, children, footer }: {
   title: string; subtitle: string; children: ReactNode; footer: ReactNode;
 }) {
   return (
-    <div className="relative flex min-h-full flex-col">
-      <div className="grid-bg absolute inset-0 -z-10 opacity-50" aria-hidden />
-      <header className="flex items-center justify-between px-4 py-4 sm:px-8">
-        <Logo />
-        <ThemeToggle />
-      </header>
-      <main className="flex flex-1 items-center justify-center px-4 py-10">
-        <div className="w-full max-w-sm animate-fade-up">
-          <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-          <p className="mt-1.5 text-sm text-muted">{subtitle}</p>
-          <div className="mt-8">{children}</div>
-          <p className="mt-8 text-center text-[13px] text-muted">{footer}</p>
-          <p className="mt-4 text-center text-xs text-subtle">
-            By continuing you agree to the <Link to="/terms" className="underline hover:text-text">Terms</Link> and{" "}
-            <Link to="/privacy" className="underline hover:text-text">Privacy Policy</Link>.
-          </p>
+    <div className="flex min-h-full bg-surface">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex items-center justify-between px-4 py-4 sm:px-8">
+          <Logo />
+          <ThemeToggle />
+        </header>
+        <main className="flex flex-1 items-center justify-center px-4 py-10">
+          <div className="w-full max-w-sm animate-fade-up">
+            <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
+            <p className="mt-1.5 text-sm text-muted">{subtitle}</p>
+            <div className="mt-8">{children}</div>
+            <p className="mt-8 text-center text-[13px] text-muted">{footer}</p>
+            <p className="mt-4 text-center text-xs text-subtle">
+              By continuing you agree to the <Link to="/terms" className="underline hover:text-text">Terms</Link> and{" "}
+              <Link to="/privacy" className="underline hover:text-text">Privacy Policy</Link>.
+            </p>
+          </div>
+        </main>
+      </div>
+      <aside className="hidden w-[46%] max-w-3xl items-center justify-center border-l border-border bg-accent-soft p-10 lg:flex">
+        <div className="w-full max-w-md">
+          <p className="mb-5 text-xl font-bold tracking-tight">Ask a repository why its code was written.</p>
+          <AnswerPreview />
         </div>
-      </main>
+      </aside>
     </div>
   );
 }
