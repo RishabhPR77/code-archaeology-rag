@@ -207,7 +207,8 @@ class QueryOut(BaseModel):
 
 
 class TimelineIn(BaseModel):
-    path: str = Field(min_length=1, max_length=300)
+    path:  str = Field(min_length=1, max_length=300)
+    match: Literal["contains", "exact", "folder"] = "contains"
 
 
 class TimelineOut(BaseModel):

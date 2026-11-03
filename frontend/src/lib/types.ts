@@ -178,6 +178,13 @@ export interface QueryResult {
   created_at: string;
 }
 
+export interface RepoFile {
+  path: string;
+  changes: number;
+}
+
+export type TimelineMatch = "contains" | "exact" | "folder";
+
 export interface TimelineResult {
   path: string;
   answer: string | null;

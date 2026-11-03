@@ -127,9 +127,20 @@
     font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.6; padding: 0.9rem 1rem;
     border-radius: 0.6rem; background: var(--surface-2); border: 1px solid var(--border); overflow-x: auto;
   }
-  .prose-answer table { width: 100%; border-collapse: collapse; font-size: 0.85rem; display: block; overflow-x: auto; }
-  .prose-answer th, .prose-answer td { border: 1px solid var(--border); padding: 0.4rem 0.65rem; text-align: left; }
-  .prose-answer th { background: var(--surface-2); font-weight: 600; }
+  .prose-answer .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 0.6rem; }
+  .prose-answer table {
+    width: 100%; border-collapse: collapse; font-size: 0.84rem; line-height: 1.55;
+    overflow-wrap: break-word; word-break: normal;
+  }
+  .prose-answer th, .prose-answer td {
+    min-width: 7rem; max-width: 26rem; padding: 0.55rem 0.8rem; text-align: left; vertical-align: top;
+    border-bottom: 1px solid var(--border);
+  }
+  .prose-answer th + th, .prose-answer td + td { border-left: 1px solid var(--border); }
+  .prose-answer th { background: var(--surface-2); font-weight: 600; white-space: nowrap; }
+  .prose-answer tbody tr:last-child td { border-bottom: 0; }
+  .prose-answer tbody tr:nth-child(even) { background: color-mix(in srgb, var(--surface-2) 50%, transparent); }
+  .prose-answer td code { white-space: nowrap; }
   .prose-answer hr { border-color: var(--border); }
 }
 

@@ -1,6 +1,6 @@
 import type {
   AskMode, AuthConfig, Author, CoChange, Commit, GitHubRepo, GitHubStatus, HotFile, Me, Model,
-  Overview, Provider, ProviderId, PullRequest, QueryResult, Repo, TimelineResult,
+  Overview, Provider, ProviderId, PullRequest, QueryResult, Repo, RepoFile, TimelineMatch, TimelineResult,
 } from "./types";
 
 export class ApiError extends Error {
@@ -87,7 +87,7 @@ export const api = {
   deleteRepo: (id: string) => del(`/repos/${id}`),
   overview: (id: string) => get<Overview>(`/repos/${id}/overview`),
   commits: (id: string) => get<Commit[]>(`/repos/${id}/commits`),
-  files: (id: string) => get<string[]>(`/repos/${id}/files`),
+  files: (id: string) => get<RepoFile[]>(`/repos/${id}/files`),
   hotfiles: (id: string, limit: number) => get<HotFile[]>(`/repos/${id}/hotfiles?limit=${limit}`),
   cochange: (id: string, limit: number) => get<CoChange[]>(`/repos/${id}/cochange?limit=${limit}`),
   authors: (id: string) => get<Author[]>(`/repos/${id}/authors`),
@@ -96,5 +96,6 @@ export const api = {
   clearQueries: (id: string) => del(`/repos/${id}/queries`),
   ask: (id: string, question: string, mode: AskMode, onlyPr: boolean) =>
     post<QueryResult>(`/repos/${id}/ask`, { question, mode, only_pr: onlyPr }),
-  timeline: (id: string, path: string) => post<TimelineResult>(`/repos/${id}/timeline`, { path }),
+  timeline: (id: string, path: string, match: TimelineMatch) =>
+    post<TimelineResult>(`/repos/${id}/timeline`, { path, match }),
 };

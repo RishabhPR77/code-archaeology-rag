@@ -10,6 +10,9 @@ export function Markdown({ children, repoUrl }: { children: string; repoUrl?: st
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
+          table: ({ children }) => (
+            <div className="table-wrap"><table>{children}</table></div>
+          ),
           a: ({ href, children }) => (
             <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>
           ),

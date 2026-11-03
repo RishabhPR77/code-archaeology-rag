@@ -114,6 +114,26 @@ def test_timeline(user_client):
     assert empty["entries"] == [] and empty["answer"] is None
 
 
+def test_file_list_and_exact_or_folder_timeline(user_client):
+    rid = _ready_repo(user_client)["id"]
+    _connect_model(user_client)
+    files = user_client.get(f"/api/repos/{rid}/files").json()
+    assert files == [{"path": "src/auth.py", "changes": 2}, {"path": "src/sessions.py", "changes": 2},
+                     {"path": "README.md", "changes": 1}]
+
+    def shas(path, match):
+        r = user_client.post(f"/api/repos/{rid}/timeline", json={"path": path, "match": match})
+        assert r.status_code == 200, r.text
+        return [e["sha"] for e in r.json()["entries"]]
+
+    assert shas("src/sessions.py", "exact") == ["a1b2c3d", "b2c3d4e"]
+    assert shas("sessions.py", "exact") == []          # a bare name is not the full path
+    assert shas("src/", "folder") == ["a1b2c3d", "b2c3d4e", "c3d4e5f"]
+    assert shas("sr", "folder") == []                  # folders match whole path segments
+    bad = user_client.post(f"/api/repos/{rid}/timeline", json={"path": "src", "match": "fuzzy"})
+    assert bad.status_code == 422
+
+
 def test_repos_are_private_per_user(client):
     from tests.conftest import register
     register(client, email="owner@example.com")

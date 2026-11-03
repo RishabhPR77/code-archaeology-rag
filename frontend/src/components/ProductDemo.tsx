@@ -1,4 +1,6 @@
-import { ArrowUp, Check, FolderGit2, Globe, LayoutDashboard, Loader2, Lock, Plus, Settings, Sparkles } from "lucide-react";
+import {
+  ArrowUp, Check, File as FileIcon, FolderGit2, Globe, LayoutDashboard, Loader2, Lock, Plus, Search, Settings, Sparkles,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "../lib/utils";
@@ -22,7 +24,7 @@ const SCENES = [
   { id: "ask", title: "Ask why",
     body: "Ask in plain English. Answers cite the exact commits and pull requests they come from." },
   { id: "explore", title: "Explore the history",
-    body: "See hot spots, busy weeks and the files that change together, without asking anything." },
+    body: "See busy weeks and hot spots, or search for any file and trace how it changed." },
 ] as const;
 
 const PROVIDERS = [
@@ -43,19 +45,33 @@ const ANSWER = "The refactor in `3f9c2a1` moved token refresh out of `CheckoutSe
 const SOURCES = ["3f9c2a1 · j.chen", "a81e0c4 · m.okafor", "PR #412"];
 const BARS = [3, 5, 4, 8, 6, 11, 7, 9, 14, 10, 6, 12];
 const HOT = [["checkout/session.ts", 100], ["payments/retry.ts", 74], ["api/orders.ts", 58], ["checkout/cart.ts", 41]] as const;
+const TRACE_FILES = [
+  { path: "checkout/session.ts", changes: 31 }, { path: "payments/retry.ts", changes: 22 },
+  { path: "checkout/cart.ts", changes: 18 }, { path: "api/orders.ts", changes: 14 },
+  { path: "checkout/session.test.ts", changes: 9 },
+];
+const PHASES = [
+  ["2023", "Built as one class handling the cart, tokens and payment.", "0c1d9fa"],
+  ["2024", "Two double-charge fixes, then token refresh moved out.", "3f9c2a1"],
+  ["2025", "A retry that is safe to repeat, asked for on PR #412.", "a81e0c4"],
+] as const;
+const TRACE_COMMITS = [
+  ["0c1d9fa", "Add checkout session"], ["5e2b8c0", "Fix double charge on retry"],
+  ["3f9c2a1", "Move token refresh out"], ["a81e0c4", "Add idempotent retry"],
+] as const;
 
 interface DemoState {
   expanded: boolean; keyText: string; saving: boolean; connected: boolean; model: string | null; toast: string | null;
   dialog: boolean; picked: string | null; ingesting: boolean; stage: number;
   question: string; asked: boolean; thinking: boolean; answer: number; sources: number;
-  grow: boolean; hotTab: boolean;
+  grow: boolean; timelineTab: boolean; pickerOpen: boolean; pickerText: string; traced: boolean;
 }
 
 const START: DemoState = {
   expanded: false, keyText: "", saving: false, connected: false, model: null, toast: null,
   dialog: false, picked: null, ingesting: false, stage: -1,
   question: "", asked: false, thinking: false, answer: 0, sources: 0,
-  grow: false, hotTab: false,
+  grow: false, timelineTab: false, pickerOpen: false, pickerText: "", traced: false,
 };
 
 // What each scene looks like when it has finished — used for reduced motion
@@ -63,7 +79,7 @@ const FINAL: Record<number, Partial<DemoState>> = {
   0: { expanded: true, keyText: "sk-ant-••••••••••••••••", connected: true, model: MODELS[1] },
   1: { picked: REPOS[0].name, ingesting: true, stage: STAGES.length - 1 },
   2: { question: QUESTION, asked: true, answer: ANSWER.length, sources: SOURCES.length },
-  3: { grow: true },
+  3: { grow: true, timelineTab: true, pickerText: TRACE_FILES[0].path, traced: true },
 };
 
 class Cancelled extends Error {}
@@ -216,11 +232,19 @@ export function ProductDemo() {
         patch({ grow: true });
         await move("chart", 900);
         await sleep(700);
-        await move("tab-hot");
+        await move("tab-timeline");
         await click();
-        patch({ hotTab: true });
-        await move("hot-0", 700);
-        await sleep(1800);
+        patch({ timelineTab: true });
+        await move("picker", 600);
+        await click();
+        patch({ pickerOpen: true });
+        await sleep(500);
+        await type("sess", (pickerText) => patch({ pickerText }), 120);
+        await move("pick-0", 650);
+        await click();
+        patch({ pickerOpen: false, pickerText: TRACE_FILES[0].path, traced: true });
+        await move("trace-commits", 800);
+        await sleep(2000);
       },
     ];
 
@@ -532,8 +556,15 @@ function AskScene({ s, t }: { s: DemoState; t: Reg }) {
   );
 }
 
+function Match({ text, q }: { text: string; q: string }) {
+  const i = q ? text.indexOf(q) : -1;
+  if (i < 0) return <>{text}</>;
+  return <>{text.slice(0, i)}<b className="text-accent">{text.slice(i, i + q.length)}</b>{text.slice(i + q.length)}</>;
+}
+
 function ExploreScene({ s, t }: { s: DemoState; t: Reg }) {
   const max = Math.max(...BARS);
+  const q = s.pickerOpen ? s.pickerText.toLowerCase() : "";
   return (
     <div className="h-full">
       <div className="flex items-center gap-2">
@@ -542,48 +573,106 @@ function ExploreScene({ s, t }: { s: DemoState; t: Reg }) {
       </div>
       <div className="mt-3 flex gap-4 border-b border-border text-[12px]">
         {["Overview", "Ask", "File timeline", "Hot files", "Pull requests"].map((tab) => (
-          <span key={tab} ref={tab === "Hot files" ? t("tab-hot") : undefined}
+          <span key={tab} ref={tab === "File timeline" ? t("tab-timeline") : undefined}
                 className={cn("-mb-px border-b-2 pb-2 transition-colors",
-                  (tab === "Hot files" ? s.hotTab : tab === "Overview" && !s.hotTab) ? "border-accent text-text" : "border-transparent text-muted")}>
+                  tab === (s.timelineTab ? "File timeline" : "Overview") ? "border-accent text-text" : "border-transparent text-muted")}>
             {tab}
           </span>
         ))}
       </div>
 
-      <div className="mt-4 grid grid-cols-4 gap-3">
-        {[["Commits", 100], ["Contributors", 7], ["Files touched", 64], ["Linked PRs", 24]].map(([label, n]) => (
-          <div key={label} className="rounded-xl border border-border bg-surface p-3">
-            <p className="text-[10px] text-muted">{label}</p>
-            <p className="mt-1 text-[20px] font-semibold transition-opacity duration-700" style={{ opacity: s.grow ? 1 : 0.15 }}>{n}</p>
+      {!s.timelineTab ? (
+        <>
+          <div className="mt-4 grid grid-cols-4 gap-3">
+            {[["Commits", 100], ["Contributors", 7], ["Files touched", 64], ["Linked PRs", 24]].map(([label, n]) => (
+              <div key={label} className="rounded-xl border border-border bg-surface p-3">
+                <p className="text-[10px] text-muted">{label}</p>
+                <p className="mt-1 text-[20px] font-semibold transition-opacity duration-700" style={{ opacity: s.grow ? 1 : 0.15 }}>{n}</p>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
 
-      <div className="mt-3 grid grid-cols-5 gap-3">
-        <div ref={t("chart")} className="col-span-3 rounded-xl border border-border bg-surface p-3">
-          <p className="text-[11px] font-medium">Commit activity</p>
-          <div className="mt-3 flex h-36 items-end gap-1.5">
-            {BARS.map((b, i) => (
-              <span key={i} className="flex-1 origin-bottom rounded-t bg-accent/80 transition-transform duration-700 ease-out"
-                    style={{ height: `${(b / max) * 100}%`, transform: `scaleY(${s.grow ? 1 : 0.05})`, transitionDelay: `${i * 45}ms` }} />
-            ))}
+          <div className="mt-3 grid grid-cols-5 gap-3">
+            <div ref={t("chart")} className="col-span-3 rounded-xl border border-border bg-surface p-3">
+              <p className="text-[11px] font-medium">Commit activity</p>
+              <div className="mt-3 flex h-36 items-end gap-1.5">
+                {BARS.map((b, i) => (
+                  <span key={i} className="flex-1 origin-bottom rounded-t bg-accent/80 transition-transform duration-700 ease-out"
+                        style={{ height: `${(b / max) * 100}%`, transform: `scaleY(${s.grow ? 1 : 0.05})`, transitionDelay: `${i * 45}ms` }} />
+                ))}
+              </div>
+            </div>
+            <div className="col-span-2 rounded-xl border border-border bg-surface p-3">
+              <p className="text-[11px] font-medium">Hot files</p>
+              <ul className="mt-3 space-y-2.5">
+                {HOT.map(([f, w], i) => (
+                  <li key={f}>
+                    <p className="truncate font-mono text-[10px]">{f}</p>
+                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-2">
+                      <div className="h-full origin-left rounded-full bg-accent transition-transform duration-700 ease-out"
+                           style={{ width: `${w}%`, transform: `scaleX(${s.grow ? 1 : 0})`, transitionDelay: `${200 + i * 90}ms` }} />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
           </div>
+        </>
+      ) : (
+        <div className="relative mt-4 animate-fade-up">
+          <div className="flex gap-2">
+            <span ref={t("picker")}
+                  className={cn("flex h-9 flex-1 items-center gap-2 rounded-lg border bg-surface px-3 font-mono text-[12px] transition-colors",
+                    s.pickerOpen ? "border-accent" : "border-border")}>
+              <Search className="size-3.5 shrink-0 text-subtle" />
+              {s.pickerText || <span className="font-sans text-subtle">Search files and folders, e.g. main.py</span>}
+              {s.pickerOpen && <span className="ml-px h-4 w-px animate-pulse bg-text" />}
+            </span>
+            <Btn primary>Trace evolution</Btn>
+          </div>
+
+          {s.pickerOpen && (
+            <div className="absolute inset-x-0 top-11 z-10 rounded-xl border border-border bg-surface py-1 shadow-card animate-fade-up">
+              <p className="px-3 pt-1 pb-1.5 text-[10px] font-semibold text-subtle">{q ? "Matching files and folders" : "Most changed files"}</p>
+              {TRACE_FILES.filter((f) => f.path.includes(q)).map((f, i) => (
+                <span key={f.path} ref={i === 0 ? t("pick-0") : undefined}
+                      className={cn("flex items-center gap-2 px-3 py-1.5", i === 0 && q && "bg-accent-soft")}>
+                  <FileIcon className="size-3.5 shrink-0 text-subtle" />
+                  <span className="flex-1 font-mono text-[11.5px]"><Match text={f.path} q={q} /></span>
+                  <span className="text-[10px] text-subtle">{f.changes} changes</span>
+                </span>
+              ))}
+            </div>
+          )}
+
+          {s.traced && (
+            <div className="mt-3 grid grid-cols-5 gap-3 animate-fade-up">
+              <div className="col-span-3 rounded-xl border border-border bg-surface p-3.5">
+                <p className="text-[11px] font-medium">Evolution summary <span className="font-mono text-subtle">· {TRACE_FILES[0].path}</span></p>
+                <ol className="mt-3 space-y-2.5">
+                  {PHASES.map(([year, text, sha]) => (
+                    <li key={sha} className="flex gap-2.5 text-[11.5px] leading-snug">
+                      <span className="font-semibold">{year}</span>
+                      <span className="text-muted">{text} <code className="font-mono text-[10.5px] text-accent">{sha}</code></span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+              <div ref={t("trace-commits")} className="col-span-2 rounded-xl border border-border bg-surface p-3.5">
+                <p className="text-[11px] font-medium">{TRACE_COMMITS.length} commits</p>
+                <ul className="mt-3 space-y-2.5">
+                  {TRACE_COMMITS.map(([sha, msg]) => (
+                    <li key={sha} className="flex gap-2 text-[11px]">
+                      <span className="font-mono font-semibold text-accent">{sha}</span>
+                      <span className="truncate text-muted">{msg}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
         </div>
-        <div className={cn("col-span-2 rounded-xl border bg-surface p-3 transition-colors", s.hotTab ? "border-accent/50" : "border-border")}>
-          <p className="text-[11px] font-medium">Hot files</p>
-          <ul className="mt-3 space-y-2.5">
-            {HOT.map(([f, w], i) => (
-              <li key={f} ref={i === 0 ? t("hot-0") : undefined}>
-                <p className="truncate font-mono text-[10px]">{f}</p>
-                <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-2">
-                  <div className="h-full origin-left rounded-full bg-accent transition-transform duration-700 ease-out"
-                       style={{ width: `${w}%`, transform: `scaleX(${s.grow ? 1 : 0})`, transitionDelay: `${200 + i * 90}ms` }} />
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

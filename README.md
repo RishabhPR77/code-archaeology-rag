@@ -48,7 +48,7 @@ Code Archaeologist makes that history answerable:
 | | |
 |---|---|
 | **Ask** | Chat-style Q&A over the history, with Detailed, Summary and Bullets modes. Every answer lists its source commits (SHA, author, date, files, relevance) and links each cited SHA to GitHub. History is saved per repository. |
-| **File timeline** | Traces every commit that touched a file, with an LLM summary of the phases of change, a monthly activity chart and the full chronology. |
+| **File timeline** | Pick any file or folder from a searchable list and trace every commit that touched it, with an LLM summary of the phases of change, a monthly activity chart and the full chronology. |
 | **Overview** | Commits, contributors, files touched, lines added and removed, linked PRs, weekly activity and a breakdown of change types. |
 | **Hot files** | The files that change most often, which is where complexity and risk concentrate. |
 | **Co-change** | File pairs that are usually modified together, revealing coupling that static analysis misses. |

@@ -208,11 +208,11 @@ def clear_queries(repo: Repo = Depends(owned_repo), db: Session = Depends(get_db
 def timeline(body: TimelineIn, repo: Repo = Depends(owned_repo),
              user: User = Depends(verified_user), db: Session = Depends(get_db)):
     chunks = _chunks(repo)
-    if not analytics.file_timeline(chunks, body.path):
+    if not analytics.file_timeline(chunks, body.path, body.match):
         return TimelineOut(path=body.path, answer=None, provider=None, model=None, entries=[])
     provider, model, generate = _llm_for(db, user)
     try:
-        result = rag.timeline(body.path, chunks, generate)
+        result = rag.timeline(body.path, chunks, generate, body.match)
     except ProviderError as e:
         raise provider_http_error(e)
     return TimelineOut(path=body.path, answer=result["answer"], provider=provider, model=model,

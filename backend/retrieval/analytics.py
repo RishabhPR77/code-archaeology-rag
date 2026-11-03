@@ -67,14 +67,25 @@ def overview(chunks) -> dict:
     }
 
 
-def file_timeline(chunks, filename: str) -> list[dict]:
-    needle = filename.lower()
-    return [row for row in reversed(commit_log(chunks))
-            if any(needle in f.lower() for f in row["files"])]
+def file_timeline(chunks, filename: str, match: str = "contains") -> list[dict]:
+    """Commits touching a path, oldest first. `match` is "contains", "exact" or "folder"."""
+    needle = filename.lower().strip("/") if match == "folder" else filename.lower()
+
+    def hit(path: str) -> bool:
+        path = path.lower()
+        if match == "exact":
+            return path == needle
+        if match == "folder":
+            return path.startswith(needle + "/")
+        return needle in path
+
+    return [row for row in reversed(commit_log(chunks)) if any(hit(f) for f in row["files"])]
 
 
-def all_files(chunks) -> list[str]:
-    return sorted({f for c in chunks for f in _files(c)})
+def all_files(chunks) -> list[dict]:
+    # Most-changed first, so the file picker opens on the files worth tracing
+    fc = Counter(f for c in chunks for f in _files(c))
+    return [{"path": f, "changes": n} for f, n in sorted(fc.items(), key=lambda x: (-x[1], x[0]))]
 
 
 def hottest_files(chunks, top_n=15) -> list[dict]:

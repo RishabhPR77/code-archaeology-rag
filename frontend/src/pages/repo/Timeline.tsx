@@ -1,23 +1,32 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { FileClock, Search } from "lucide-react";
 import { useMemo, useState, type FormEvent } from "react";
+import { Link } from "react-router";
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { ProviderMark } from "../../components/brand";
 import { CommitTypeBadge } from "../../components/CommitType";
+import { choiceLabel, FilePicker, type FileChoice } from "../../components/FilePicker";
 import { Markdown } from "../../components/Markdown";
-import { Button, Card, CardHeader, EmptyState, ErrorNotice, Input, Skeleton } from "../../components/ui";
+import { Button, Card, CardHeader, EmptyState, ErrorNotice, Skeleton } from "../../components/ui";
 import { api } from "../../lib/api";
 import { useSession } from "../../lib/auth";
 import { tooltipStyle, useThemeColors } from "../../lib/theme";
 import type { Repo } from "../../lib/types";
 import { formatDate, shortSha } from "../../lib/utils";
 
+function describe(c: FileChoice) {
+  if (c.match === "exact") return <span className="font-mono">{c.path}</span>;
+  if (c.match === "folder") return <>Every file in <span className="font-mono">{c.path}/</span></>;
+  return <>Every path containing <span className="font-mono">“{c.path}”</span></>;
+}
+
 export function Timeline({ repo }: { repo: Repo }) {
   const { user } = useSession();
-  const [path, setPath] = useState("");
+  const [query, setQuery] = useState("");
+  const [choice, setChoice] = useState<FileChoice | null>(null);
   const files = useQuery({ queryKey: ["repo-data", repo.id, "files"], queryFn: () => api.files(repo.id) });
-  const trace = useMutation({ mutationFn: (p: string) => api.timeline(repo.id, p) });
+  const trace = useMutation({ mutationFn: (c: FileChoice) => api.timeline(repo.id, c.path, c.match) });
   const c = useThemeColors();
   const hasModel = !!(user.active_provider && user.active_model);
 
@@ -30,48 +39,61 @@ export function Timeline({ repo }: { repo: Repo }) {
     return [...counts].map(([month, commits]) => ({ month, commits }));
   }, [trace.data]);
 
-  const submit = (e: FormEvent) => { e.preventDefault(); if (path.trim()) trace.mutate(path.trim()); };
+  const run = (next: FileChoice) => {
+    setChoice(next);
+    setQuery(choiceLabel(next));
+    if (hasModel) trace.mutate(next);
+  };
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    const q = query.trim();
+    if (!q) return;
+    // Keep a picked file or folder; anything typed by hand searches every path containing it
+    run(choice && choiceLabel(choice) === q ? choice : { path: q, match: "contains" });
+  };
   const result = trace.data;
+  const traced = trace.variables;
 
   return (
     <div className="space-y-4">
+      {!hasModel && (
+        <div className="rounded-lg border border-warning/25 bg-warning-soft px-4 py-3 text-[13px] text-warning">
+          Connect a model provider to trace files. <Link to="/app/settings" className="font-medium underline">Open settings</Link>
+        </div>
+      )}
+
       <Card className="p-5">
         <form onSubmit={submit} className="flex flex-col gap-2 sm:flex-row">
-          <div className="relative flex-1">
-            <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-subtle" />
-            <Input list="repo-files" value={path} onChange={(e) => setPath(e.target.value)}
-                   placeholder="File name or path, e.g. sessions.py" className="pl-9 font-mono text-[13px]"
-                   aria-label="File to trace" />
-            <datalist id="repo-files">
-              {files.data?.map((f) => <option key={f} value={f} />)}
-            </datalist>
-          </div>
-          <Button type="submit" loading={trace.isPending} disabled={!path.trim() || !hasModel}>Trace evolution</Button>
+          <FilePicker files={files.data} loading={files.isPending} query={query}
+                      onQueryChange={(q) => { setQuery(q); setChoice(null); }} onPick={run} />
+          <Button type="submit" loading={trace.isPending} disabled={!query.trim() || !hasModel}>Trace evolution</Button>
         </form>
         <p className="mt-2 text-xs text-subtle">
-          Matches any path containing your text. {files.data && `${files.data.length} files were touched in the ingested history.`}
+          Pick a file or folder from the list, or press Enter to trace every path containing your text.
+          {files.data && ` ${files.data.length} files were touched in the ingested history.`}
         </p>
       </Card>
 
+      {files.error && <ErrorNotice error={files.error} />}
       {trace.error && <ErrorNotice error={trace.error} />}
       {trace.isPending && <Skeleton className="h-60 rounded-xl" />}
 
       {!trace.isPending && !result && (
         <Card>
           <EmptyState icon={<FileClock className="size-5" />} title="Trace how a file evolved"
-                      description="Get the phases of change, who drove them and recurring patterns — plus every commit that touched it." />
+                      description="Get the phases of change, who drove them and recurring patterns, plus every commit that touched it." />
         </Card>
       )}
 
-      {result && result.entries.length === 0 && (
-        <Card><EmptyState icon={<Search className="size-5" />} title={`No commits touched “${result.path}”`}
-                          description="Try a shorter name, or pick a file from the suggestions." /></Card>
+      {result && traced && result.entries.length === 0 && (
+        <Card><EmptyState icon={<Search className="size-5" />} title="No commits found"
+                          description={<>Nothing in the ingested history touched {describe(traced)}. Try picking a file from the list.</>} /></Card>
       )}
 
-      {result && result.entries.length > 0 && (
-        <div className="grid gap-4 lg:grid-cols-5">
-          <Card className="lg:col-span-3">
-            <CardHeader title="Evolution summary" description={<span className="font-mono">{result.path}</span>}
+      {result && traced && result.entries.length > 0 && (
+        <>
+          <Card>
+            <CardHeader title="Evolution summary" description={describe(traced)}
                         action={result.provider && (
                           <span className="flex items-center gap-1.5 text-xs text-subtle">
                             <ProviderMark id={result.provider} className="size-5 text-[8px]" />
@@ -80,10 +102,10 @@ export function Timeline({ repo }: { repo: Repo }) {
                         )} />
             <div className="p-5">{result.answer && <Markdown repoUrl={repo.url}>{result.answer}</Markdown>}</div>
           </Card>
-          <div className="space-y-4 lg:col-span-2">
+          <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
             <Card>
               <CardHeader title="Changes per month" />
-              <div className="h-40 px-2 pt-3 pb-1">
+              <div className="h-56 px-2 pt-3 pb-1">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={monthly} margin={{ left: -24, right: 8 }}>
                     <XAxis dataKey="month" tick={{ fontSize: 10, fill: c.subtle }} axisLine={false} tickLine={false} />
@@ -116,7 +138,7 @@ export function Timeline({ repo }: { repo: Repo }) {
               </ol>
             </Card>
           </div>
-        </div>
+        </>
       )}
     </div>
   );

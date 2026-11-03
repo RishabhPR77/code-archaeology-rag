@@ -80,14 +80,16 @@ def ask(question: str, namespace: str, generate: Generate,
     return {"answer": answer, "sources": [_source(c) for c in chunks]}
 
 
-def timeline(filename: str, chunks: list[dict], generate: Generate) -> dict:
-    entries = analytics.file_timeline(chunks, filename)
+def timeline(filename: str, chunks: list[dict], generate: Generate, match: str = "contains") -> dict:
+    entries = analytics.file_timeline(chunks, filename, match)
     if not entries:
         return {"answer": None, "entries": []}
 
     lines = [f"[{i}] {e['timestamp'][:10]} · `{e['sha']}` · {e['author']} · {e['type']}\n    {e['message'][:160]}"
              for i, e in enumerate(entries, 1)]
-    prompt = (f"Summarize how files matching '{filename}' evolved over time based on these commits.\n"
+    subject = {"exact": f"the file '{filename}'",
+               "folder": f"the files in the folder '{filename.strip('/')}'"}.get(match, f"files matching '{filename}'")
+    prompt = (f"Summarize how {subject} evolved over time based on these commits.\n"
               "Cover the major phases of change in order, who drove them, and any recurring themes "
               "(bug clusters, refactors, feature growth). Cite commits by short SHA.\n\n"
               "TIMELINE:\n" + "\n".join(lines))
