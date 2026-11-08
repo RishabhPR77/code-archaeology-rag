@@ -1,6 +1,6 @@
 # Accuracy check
 
-Run on 2026-11-09 with `python -m evals.run_eval` (local BGE-small embeddings, the last 200 commits of each repository, 20 minutes). The live site uses Pinecone's llama-text-embed-v2, so its numbers can differ.
+Run on 2026-11-09 with `python -m evals.run_eval` (local BGE-small embeddings, the last 200 commits of each repository, 10 minutes). The live site uses Pinecone's llama-text-embed-v2, so its numbers can differ.
 
 | Repository | Commits | Linked PRs | Title questions | Description questions | Traced bugs |
 |---|---:|---:|---:|---:|---:|
@@ -22,9 +22,10 @@ The searches compared: the score mix the app used before; dense (embedding) sear
 |---|---:|---:|---:|---:|
 | Before: score mix (0.6 dense + 0.4 keywords) | 38% | 47% | 55% | 0.43 |
 | Dense only | 40% | 57% | 68% | 0.49 |
-| Rank fusion, keyword weight 0.25 | 45% | 61% | 70% | 0.54 |
-| Rank fusion, keyword weight 0.5 | 46% | 62% | 71% | 0.55 |
-| Rank fusion, keyword weight 1 (the app) | 47% | 64% | 74% | 0.56 |
+| Rank fusion, keyword weight 1 | 47% | 64% | 74% | 0.56 |
+| Rank fusion, keyword weight 2 | 48% | 66% | 76% | 0.58 |
+| Rank fusion, keyword weight 3 (the app) | 49% | 67% | 78% | 0.59 |
+| Rank fusion, keyword weight 4 | 50% | 68% | 78% | 0.60 |
 
 ### PR title questions, all repositories together
 
@@ -32,26 +33,27 @@ The searches compared: the score mix the app used before; dense (embedding) sear
 |---|---:|---:|---:|---:|
 | Before: score mix (0.6 dense + 0.4 keywords) | 41% | 56% | 69% | 0.50 |
 | Dense only | 47% | 63% | 75% | 0.56 |
-| Rank fusion, keyword weight 0.25 | 50% | 66% | 78% | 0.59 |
-| Rank fusion, keyword weight 0.5 | 50% | 69% | 79% | 0.61 |
-| Rank fusion, keyword weight 1 (the app) | 51% | 70% | 81% | 0.62 |
+| Rank fusion, keyword weight 1 | 51% | 70% | 81% | 0.62 |
+| Rank fusion, keyword weight 2 | 53% | 70% | 83% | 0.63 |
+| Rank fusion, keyword weight 3 (the app) | 53% | 70% | 84% | 0.63 |
+| Rank fusion, keyword weight 4 | 52% | 69% | 83% | 0.63 |
 
 ### Per repository, before and now
 
 | Repository, question, search | Found in top 1 | Found in top 3 | Found in top 8 | MRR |
 |---|---:|---:|---:|---:|
 | pallets/click, description, before | 31% | 41% | 53% | 0.38 |
-| pallets/click, description, now | 51% | 68% | 78% | 0.61 |
+| pallets/click, description, now | 51% | 68% | 81% | 0.61 |
 | pallets/click, title, before | 43% | 60% | 70% | 0.52 |
-| pallets/click, title, now | 55% | 76% | 86% | 0.66 |
+| pallets/click, title, now | 60% | 79% | 87% | 0.70 |
 | pallets/flask, description, before | 40% | 48% | 55% | 0.45 |
-| pallets/flask, description, now | 52% | 72% | 80% | 0.63 |
+| pallets/flask, description, now | 50% | 78% | 80% | 0.63 |
 | pallets/flask, title, before | 46% | 62% | 75% | 0.55 |
-| pallets/flask, title, now | 58% | 81% | 90% | 0.70 |
+| pallets/flask, title, now | 60% | 75% | 90% | 0.70 |
 | encode/httpx, description, before | 41% | 50% | 56% | 0.46 |
-| encode/httpx, description, now | 43% | 60% | 70% | 0.53 |
+| encode/httpx, description, now | 48% | 63% | 76% | 0.57 |
 | encode/httpx, title, before | 38% | 53% | 67% | 0.47 |
-| encode/httpx, title, now | 47% | 64% | 76% | 0.57 |
+| encode/httpx, title, now | 47% | 64% | 80% | 0.58 |
 
 ## Who broke it?
 
@@ -61,10 +63,10 @@ Every bug fix that Bug origins traced to one of the ingested commits becomes a r
 
 | Ranking | Cause in top 1 | Cause in top 3 | Cause in top 10 | MRR |
 |---|---:|---:|---:|---:|
-| App (search 0.5, files 0.3, risk 0.2) | 31% | 38% | 69% | 0.39 |
-| Search only | 23% | 38% | 54% | 0.35 |
-| No risk (0.7, 0.3, 0) | 23% | 38% | 54% | 0.35 |
-| More risk (0.4, 0.3, 0.3) | 23% | 31% | 62% | 0.31 |
+| App (search 0.5, files 0.3, risk 0.2) | 31% | 46% | 69% | 0.42 |
+| Search only | 23% | 54% | 62% | 0.39 |
+| No risk (0.7, 0.3, 0) | 23% | 54% | 62% | 0.39 |
+| More risk (0.4, 0.3, 0.3) | 23% | 38% | 62% | 0.33 |
 | App weights, with the search from before | 31% | 31% | 38% | 0.33 |
 | Newest commit first | 15% | 15% | 31% | 0.18 |
 
@@ -73,5 +75,5 @@ Every bug fix that Bug origins traced to one of the ingested commits becomes a r
 | Repository | Cause in top 1 | Cause in top 3 | Cause in top 10 | MRR |
 |---|---:|---:|---:|---:|
 | pallets/click | 60% | 60% | 60% | 0.60 |
-| pallets/flask | 20% | 20% | 80% | 0.28 |
+| pallets/flask | 20% | 40% | 80% | 0.36 |
 | encode/httpx | 0% | 33% | 67% | 0.22 |

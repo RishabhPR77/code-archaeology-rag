@@ -32,7 +32,9 @@ SEARCH_POOL = 200
 # The two rankings are merged by position (reciprocal rank fusion), not by raw score: cosine
 # scores bunch together while keyword scores spread out, so mixing scores let keywords decide.
 RRF_K = 60
-KEYWORD_WEIGHT = 1.0   # evals/run_eval.py compares other values
+# A keyword match counts 3x a meaning match: best of 1-10 on click and flask, and it also won on httpx,
+# which wasn't used to choose it (evals/run_eval.py compares several values)
+KEYWORD_WEIGHT = 3.0
 
 STOPWORDS = frozenset("""
 a about after again all also an and any are as at be because been before being between both but by

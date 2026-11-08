@@ -13,9 +13,13 @@ def test_keyword_tokens_split_code_and_skip_common_words():
 
 def test_fuse_merges_rankings_by_position():
     # Meaning ranks 0, 1, 2; only position 2 matches the keywords
-    ranked = fuse(3, [0.0, 0.0, 5.0])
+    ranked = fuse(3, [0.0, 0.0, 5.0], keyword_weight=1)
     assert [i for _, i in ranked] == [2, 0, 1]
     assert ranked[0][0] == pytest.approx((1 / (RRF_K + 3) + 1 / (RRF_K + 1)) / (2 / (RRF_K + 1)))
+    # The app weighs a keyword match 3x, so a keyword hit outranks the best meaning-only result
+    ranked = fuse(3, [0.0, 0.0, 5.0])
+    assert [i for _, i in ranked] == [2, 0, 1]
+    assert ranked[0][0] == pytest.approx((1 / (RRF_K + 3) + 3 / (RRF_K + 1)) / (4 / (RRF_K + 1)))
     # First in both rankings scores exactly 1
     assert fuse(2, [9.0, 1.0])[0] == (pytest.approx(1.0), 0)
     # Without keywords the meaning order stands, ties included

@@ -52,7 +52,7 @@ from storage.vector_store import VectorStore  # noqa: E402
 BACKEND = Path(__file__).resolve().parents[1]
 DEFAULT_REPOS = ["pallets/click", "pallets/flask", "encode/httpx"]
 # Keyword side of rank fusion; the app uses vector_store.KEYWORD_WEIGHT
-FUSION_WEIGHTS = sorted({0.25, 0.5, 1.0, vector_store.KEYWORD_WEIGHT})
+FUSION_WEIGHTS = sorted({1.0, 2.0, 3.0, 4.0, vector_store.KEYWORD_WEIGHT})
 WEIGHT_SETS = {
     "App (search 0.5, files 0.3, risk 0.2)": WEIGHTS,
     "Search only": {"search": 1.0, "files": 0.0, "risk": 0.0},

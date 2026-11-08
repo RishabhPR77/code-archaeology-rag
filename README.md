@@ -113,7 +113,7 @@ flowchart LR
 **Answering:**
 
 1. **Follow-ups.** In a chat with earlier messages, the model first rewrites the question into a standalone one (“who reviewed it?” becomes “who reviewed the OAuth login change in a1b2c3d?”). That is what gets searched, and the answer prompt includes the last three exchanges as context. The UI shows what was searched.
-2. **Hybrid retrieval.** Up to 200 commits are fetched by meaning (dense vectors) and also scored by keywords (BM25, with code split into words, so `ctx.ensure_object()` matches "ensure object"). The two rankings are merged by position with reciprocal rank fusion, so neither side's score scale can drown out the other. Exact identifiers such as function names and file paths are found as reliably as concepts; the [accuracy check](#accuracy) measures how well it works.
+2. **Hybrid retrieval.** Up to 200 commits are fetched by meaning (dense vectors) and also scored by keywords (BM25, with code split into words, so `ctx.ensure_object()` matches "ensure object"). The two rankings are merged by position with reciprocal rank fusion, so neither side's score scale can drown out the other, and a keyword match counts three times a meaning match. Exact identifiers such as function names and file paths are found as reliably as concepts; the [accuracy check](#accuracy) measures how well it works.
 3. **Grounded prompt.** The model must answer only from the retrieved commits, cite SHAs and say when the evidence is insufficient.
 4. **Generation.** The user's active provider and model generate the answer. It is rendered as Markdown with no raw HTML allowed and stored in the repository's history.
 
@@ -372,27 +372,52 @@ How often does search find the right commit, and does Who broke it? point at the
 
 Latest run: the last 200 commits of `pallets/click`, `pallets/flask` and `encode/httpx`, with local BGE-small embeddings. Full tables are in [`backend/evals/RESULTS.md`](backend/evals/RESULTS.md).
 
-| Search | Questions | Right commit first | In the top 3 | In the top 8 |
-|---|---:|---:|---:|---:|
-| PR description questions, before | 263 | 38% | 47% | 55% |
-| PR description questions, now | 263 | **47%** | **64%** | **74%** |
-| PR title questions, before | 320 | 41% | 56% | 69% |
-| PR title questions, now | 320 | **51%** | **70%** | **81%** |
+| Search | Questions | Right commit first | In the top 3 | In the top 8 | MRR |
+|---|---:|---:|---:|---:|---:|
+| PR description questions, before | 263 | 38% | 47% | 55% | 0.43 |
+| PR description questions, now | 263 | **49%** | **67%** | **78%** | **0.59** |
+| PR title questions, before | 320 | 41% | 56% | 69% | 0.50 |
+| PR title questions, now | 320 | **53%** | **70%** | **84%** | **0.63** |
 
 | Who broke it? | Reports | Cause first | In the top 3 | In the top 10 |
 |---|---:|---:|---:|---:|
 | Before | 13 | 31% | 31% | 38% |
-| Now | 13 | 31% | **38%** | **69%** |
+| Now | 13 | 31% | **46%** | **69%** |
 | Baseline: newest commit first | 13 | 15% | 15% | 31% |
 
 What it shows:
 
 - **What was wrong.** Search used to add 0.6 × the dense score to 0.4 × the keyword score. Dense scores among the candidates bunch together (a spread of about 0.08), while keyword scores divided by the best one spread across almost the whole 0 to 1 range, so in practice keywords decided the order. Words were also split on spaces, so `echo()` never matched "echo". The result was worse than dense search alone.
-- **The fix.** Rank fusion merges the two rankings by position, keywords are matched over every commit instead of only the top 32 by meaning, and code is split into words. It beats the old search for both question types in every repository, and beats dense search alone on every measure. Each step up in keyword weight helped or tied, up to equal weight, which is what the app uses.
-- **Who broke it? gains from the better search:** the traced cause is in the top 10 for 9 of 13 reports instead of 5. 13 cases are still too few to tune its weights, and a one-line fix message is much less to go on than a real bug report.
-- **The absolute numbers are pessimistic.** The PR text is removed from the index, the local model reads only about 512 tokens of each commit (the live model reads about 2048), and another commit from the same PR counts as a miss. The comparisons between searches are the reliable part. They haven't been repeated with the live site's embedding model yet.
+- **The fix.** Rank fusion merges the two rankings by position, keywords are matched over every commit instead of only the top 32 by meaning, code is split into words, and a keyword match counts three times a meaning match. It beats the old search for both question types in every repository, and beats dense search alone on every measure.
+- **How the weight was chosen.** Weights from 1 to 10 were tried on click and flask, and 3 did best. On httpx, which wasn't used to choose it, weight 3 also beat weight 1 (the right commit in the top 8 for 76% of description questions instead of 70%), so the gain isn't luck. Stemming and giving the commit message extra weight were tried too and made no reliable difference, so they were left out.
+- **Who broke it? gains from the better search:** the traced cause is in the top 3 for 6 of 13 reports instead of 4. 13 cases are still too few to tune its weights, and a one-line fix message is much less to go on than a real bug report.
+- **The absolute numbers are pessimistic.** The PR text is removed from the index, and the local model reads only about 512 tokens of each commit (the live model reads about 2048). The comparisons between searches are the reliable part. They haven't been repeated with the live site's embedding model yet.
 
-Run it yourself (needs `requirements-local.txt` for the embedding model; about 20 minutes, and it never touches Pinecone, the database or `GITHUB_TOKEN`):
+### What good looks like
+
+- **Found in the top 8** is the share of questions where the right commit is among the 8 that the Ask tab gives the model. It's the number that matters most: if the right commit isn't there, the model can't use it.
+- **Right commit first** is the share where it's the very first source.
+- **MRR** (mean reciprocal rank) averages 1 ÷ the answer's position: 1 for first, 0.5 for second, 0.33 for third, 0 when it's missing. One number that rewards ranking the answer high.
+
+Rules of thumb for this test, which is harder than everyday use because the PR text is removed:
+
+| Rating | Found in the top 8 | Right commit first | MRR |
+|---|---:|---:|---:|
+| Weak | under 60% | under 35% | under 0.45 |
+| OK | 60–75% | 35–50% | 0.45–0.60 |
+| Good | 75–85% | 50–60% | 0.60–0.70 |
+| Very good | 85–92% | 60–70% | 0.70–0.80 |
+| Excellent | over 92% | over 70% | over 0.80 |
+
+On the number that matters most, search went from weak (55% in the top 8) to good (78–84%). Putting the right commit first (49–53%, MRR 0.59–0.63) is between OK and good, which is where a reranker would help most. For Who broke it?, which shows three suspects, good means the cause is in the top 3 for about half of real bug reports and very good means 60% or more, measured on at least 50 reports (with 13, one report moves the number by 8 points).
+
+Next steps toward very good:
+
+1. **Rerank the top results** with a model that reads the question and each commit together (a cross-encoder). Pinecone hosts one (`bge-reranker-v2-m3`), but its free plan allows about 500 rerank requests a month, so search would need to fall back when they run out.
+2. **Repeat the check with the live embedding model**, which reads four times more of each commit.
+3. **Test Who broke it? on real bug reports**, using the GitHub issue each fix closes, over more commits so there are at least 50 cases. This needs a GitHub token for the extra API requests.
+
+Run it yourself (needs `requirements-local.txt` for the embedding model; about 20 minutes the first time and 10 after that, and it never touches Pinecone, the database or `GITHUB_TOKEN`):
 
 ```bash
 cd backend
