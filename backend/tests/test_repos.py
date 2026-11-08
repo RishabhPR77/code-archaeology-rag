@@ -265,7 +265,7 @@ def test_chats_are_private_and_deletable(client):
     assert client.get(f"/api/repos/{rid}/chats/{chat}").status_code == 404
 
 
-def test_a_failed_first_question_leaves_no_empty_chat(user_client):
+def test_a_failed_first_question_leaves_no_empty_chat(user_client, monkeypatch):
     rid = _ready_repo(user_client)["id"]
     _connect_model(user_client)
     from tests.conftest import FakeProvider
@@ -274,10 +274,54 @@ def test_a_failed_first_question_leaves_no_empty_chat(user_client):
     def failing(*a):
         raise ProviderError("rate_limit", "slow down")
 
-    FakeProvider.generate = staticmethod(failing)
-    try:
-        assert user_client.post(f"/api/repos/{rid}/ask", json={"question": "why oauth?"}).status_code == 429
-    finally:
-        del FakeProvider.generate
+    monkeypatch.setattr(FakeProvider, "generate", lambda self, *a: failing())
+    assert user_client.post(f"/api/repos/{rid}/ask", json={"question": "why oauth?"}).status_code == 429
     assert user_client.get(f"/api/repos/{rid}/chats").json() == []
+
+
+def test_follow_ups_are_rewritten_using_the_chat(user_client):
+    from app.services import rag
+    from tests.conftest import FakeProvider
+    rid = _ready_repo(user_client)["id"]
+    _connect_model(user_client)
+
+    first = user_client.post(f"/api/repos/{rid}/ask", json={"question": "why was oauth login added?"}).json()
+    assert first["search_query"] is None and len(FakeProvider.calls) == 1   # a first question isn't rewritten
+
+    FakeProvider.calls.clear()
+    r = user_client.post(f"/api/repos/{rid}/ask",
+                         json={"question": "who reviewed it?", "conversation_id": first["conversation_id"]}).json()
+    assert r["search_query"] == "Standalone: who reviewed it?"
+    rewrite, answer = FakeProvider.calls
+    assert rewrite["system"] == rag.REWRITE_PROMPT and "Q: why was oauth login added?" in rewrite["prompt"]
+    assert "CONVERSATION SO FAR" in answer["prompt"] and "Q: why was oauth login added?" in answer["prompt"]
+    assert "QUESTION:\nwho reviewed it?" in answer["prompt"]
+    assert "searched for: Standalone: who reviewed it?" in answer["prompt"]
+
+    saved = user_client.get(f"/api/repos/{rid}/chats/{first['conversation_id']}").json()
+    assert [m["search_query"] for m in saved] == [None, "Standalone: who reviewed it?"]
+
+
+def test_follow_ups_see_only_the_last_three_exchanges(user_client):
+    from tests.conftest import FakeProvider
+    rid = _ready_repo(user_client)["id"]
+    _connect_model(user_client)
+    chat = None
+    for n in ("one", "two", "three", "four", "five"):
+        chat = user_client.post(f"/api/repos/{rid}/ask",
+                                json={"question": f"question {n}?", "conversation_id": chat}).json()["conversation_id"]
+    prompt = FakeProvider.calls[-1]["prompt"]
+    # Asking the fifth question: exchanges two to four are sent, the first one has dropped out
+    assert "Q: question one?" not in prompt
+    assert all(f"Q: question {n}?" in prompt for n in ("two", "three", "four"))
+
+
+@pytest.mark.parametrize("reply, expected", [
+    ('"Why was the retry in 3f9c2a1 reverted?"', "Why was the retry in 3f9c2a1 reverted?"),
+    ("Standalone question: Who reviewed PR #42?\n\nIt was bob.", "Who reviewed PR #42?"),
+    ("  \n  ", "who reviewed it?"),
+])
+def test_rewrites_are_cleaned_up(reply, expected):
+    from app.services.rag import _clean_rewrite
+    assert _clean_rewrite(reply, "who reviewed it?") == expected
 

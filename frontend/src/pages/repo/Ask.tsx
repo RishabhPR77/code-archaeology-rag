@@ -69,6 +69,12 @@ function Exchange({ q, repoUrl }: { q: QueryResult; repoUrl: string }) {
       <div className="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-accent px-4 py-2.5 text-[14px] text-accent-fg">
         {q.question}
       </div>
+      {q.search_query && (
+        // A follow-up was rewritten to stand on its own; showing it explains which commits came back
+        <p className="ml-auto w-fit max-w-[85%] text-right text-xs text-subtle">
+          Searched for: <span className="text-muted">{q.search_query}</span>
+        </p>
+      )}
       <Card className="p-5">
         <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-subtle">
           <ProviderMark id={q.provider} className="size-5 text-[8px]" />
@@ -293,7 +299,9 @@ export function Ask({ repo }: { repo: Repo }) {
             </div>
           </Card>
           <p className="mt-2 flex items-center justify-center gap-1.5 text-[11px] text-subtle">
-            <MessageSquareText className="size-3" /> Enter to send · Shift+Enter for a new line · uses your own API key
+            <MessageSquareText className="size-3" />
+            {chatId === null ? "Enter to send · Shift+Enter for a new line · uses your own API key"
+              : "Follow-ups use this chat's last 3 questions and answers · uses your own API key"}
           </p>
         </div>
       </div>

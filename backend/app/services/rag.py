@@ -1,5 +1,6 @@
 # app/services/rag.py
 """Retrieval-augmented answers over commit history, provider-agnostic."""
+import re
 from collections.abc import Callable
 
 from retrieval import analytics
@@ -9,7 +10,19 @@ SYSTEM_PROMPT = """You are Code Archaeologist — an expert at explaining why co
 
 Answer using ONLY the commits provided. If they don't contain enough information, say so plainly.
 Cite the commits you rely on by short SHA in backticks (for example `a1b2c3d`), and mention authors or files when useful.
+Earlier messages in the conversation only tell you what the question refers to; every factual claim must still come from the retrieved commits.
 Be specific and technical. Format the answer in Markdown."""
+
+REWRITE_PROMPT = """You rewrite follow-up questions about a code repository's history into standalone questions.
+Use the conversation to replace pronouns and vague references (it, that change, the bug, he) with the specific
+commits, files, features or people they refer to. Keep the user's intent and keep it short.
+If the question already stands on its own, return it unchanged.
+Reply with only the rewritten question."""
+
+# How much of the chat a follow-up sees: enough to resolve “it”, small enough to stay cheap
+HISTORY_TURNS = 3
+HISTORY_ANSWER_CHARS = 1500
+REWRITE_ANSWER_CHARS = 600
 
 MODE_INSTRUCTIONS = {
     "detailed": "",
@@ -21,6 +34,8 @@ PR_LISTING_TOP_K = 60
 
 # (system, prompt) -> answer text
 Generate = Callable[[str, str], str]
+# (question, answer) pairs from the same chat, oldest first
+History = list[tuple[str, str]]
 
 
 def _is_pr_listing_question(question: str) -> bool:
@@ -31,7 +46,31 @@ def _is_pr_listing_question(question: str) -> bool:
                                   "all closed", "every pull", "every pr"])
 
 
-def build_prompt(question: str, chunks: list[dict], mode: str, chars_per_chunk: int) -> str:
+def _conversation(history: History, answer_chars: int) -> str:
+    return "\n\n".join(f"Q: {q}\nA: {a[:answer_chars]}" for q, a in history)
+
+
+def _clean_rewrite(text: str, fallback: str) -> str:
+    """The first real line of the model's reply, without quotes or a label; the original question if empty."""
+    for line in text.strip().splitlines():
+        line = line.strip().strip('"“”').strip()
+        line = re.sub(r"^(standalone|rewritten)?\s*question\s*:\s*", "", line, flags=re.IGNORECASE).strip()
+        if line:
+            return line[:500]
+    return fallback
+
+
+def standalone_question(question: str, history: History, generate: Generate) -> str:
+    """Turn a follow-up like "who reviewed it?" into a question that can be searched on its own."""
+    if not history:
+        return question
+    prompt = (f"CONVERSATION:\n{_conversation(history, REWRITE_ANSWER_CHARS)}\n\n"
+              f"FOLLOW-UP QUESTION:\n{question}")
+    return _clean_rewrite(generate(REWRITE_PROMPT, prompt), question)
+
+
+def build_prompt(question: str, chunks: list[dict], mode: str, chars_per_chunk: int,
+                 history: History = (), search_query: str | None = None) -> str:
     blocks = []
     for i, chunk in enumerate(chunks, 1):
         meta = chunk["metadata"]
@@ -43,7 +82,11 @@ Has PR: {meta['has_pr']}
 
 {chunk['text'][:chars_per_chunk]}""")
     instruction = MODE_INSTRUCTIONS.get(mode, "")
-    return (f"QUESTION:\n{question}\n\n"
+    context = (f"CONVERSATION SO FAR (context only):\n{_conversation(history, HISTORY_ANSWER_CHARS)}\n\n"
+               if history else "")
+    searched = (f"(The history was searched for: {search_query})\n\n"
+                if search_query and search_query != question else "")
+    return (context + f"QUESTION:\n{question}\n\n" + searched
             + (f"FORMAT: {instruction}\n\n" if instruction else "")
             + "RETRIEVED COMMITS:\n" + "\n\n".join(blocks))
 
@@ -63,21 +106,24 @@ def _source(chunk: dict) -> dict:
     }
 
 
-def ask(question: str, namespace: str, generate: Generate,
-        mode: str = "detailed", only_pr: bool = False, top_k: int = 8) -> dict:
+def ask(question: str, namespace: str, generate: Generate, mode: str = "detailed",
+        only_pr: bool = False, top_k: int = 8, history: History | None = None) -> dict:
+    history = (history or [])[-HISTORY_TURNS:]
+    # Follow-ups are searched as standalone questions; the first question in a chat is used as-is
+    query = standalone_question(question, history, generate)
     store = VectorStore(namespace)
     # For PR listing questions — pull many PR-linked commits, each trimmed
-    if _is_pr_listing_question(question):
-        chunks, per_chunk = store.search(question, top_k=PR_LISTING_TOP_K, filters={"has_pr": True}), 500
+    if _is_pr_listing_question(query):
+        chunks, per_chunk = store.search(query, top_k=PR_LISTING_TOP_K, filters={"has_pr": True}), 500
     else:
-        chunks, per_chunk = store.search(question, top_k=top_k,
+        chunks, per_chunk = store.search(query, top_k=top_k,
                                          filters={"has_pr": True} if only_pr else None), 2500
 
     if not chunks:
-        return {"answer": "No relevant commits were found for this question.", "sources": []}
+        return {"answer": "No relevant commits were found for this question.", "sources": [], "search_query": query}
 
-    answer = generate(SYSTEM_PROMPT, build_prompt(question, chunks, mode, per_chunk))
-    return {"answer": answer, "sources": [_source(c) for c in chunks]}
+    answer = generate(SYSTEM_PROMPT, build_prompt(question, chunks, mode, per_chunk, history, query))
+    return {"answer": answer, "sources": [_source(c) for c in chunks], "search_query": query}
 
 
 def timeline(filename: str, chunks: list[dict], generate: Generate, match: str = "contains") -> dict:

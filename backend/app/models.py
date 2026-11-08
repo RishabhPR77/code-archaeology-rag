@@ -115,6 +115,7 @@ class Query(Base):
     conversation_id: Mapped[int | None] = mapped_column(
         ForeignKey("conversations.id", ondelete="CASCADE"), index=True)   # set for every ask
     question:     Mapped[str] = mapped_column(Text)
+    search_query: Mapped[str | None] = mapped_column(Text)              # a follow-up, rewritten to stand alone
     answer:       Mapped[str] = mapped_column(Text)
     mode:         Mapped[str] = mapped_column(String(20), default="detailed")
     provider:     Mapped[str] = mapped_column(String(32))

@@ -54,6 +54,8 @@ class FakeProvider:
 
     def generate(self, api_key, model, system, prompt):
         self.calls.append({"model": model.id, "system": system, "prompt": prompt})
+        if "FOLLOW-UP QUESTION:" in prompt:   # rewriting a follow-up into a standalone question
+            return f"Standalone: {prompt.rsplit('FOLLOW-UP QUESTION:', 1)[1].strip()}"
         return f"Answer from {model.id}: see `abc1234`."
 
 

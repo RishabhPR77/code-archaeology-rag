@@ -200,6 +200,7 @@ class QueryOut(BaseModel):
     kind:       str
     conversation_id: int | None
     question:   str
+    search_query: str | None
     answer:     str
     mode:       str
     provider:   str

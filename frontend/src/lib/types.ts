@@ -171,6 +171,7 @@ export interface QueryResult {
   kind: string;
   conversation_id: number | null;
   question: string;
+  search_query: string | null;
   answer: string;
   mode: AskMode;
   provider: ProviderId;

@@ -47,7 +47,7 @@ Code Archaeologist makes that history answerable:
 
 | | |
 |---|---|
-| **Ask** | Chat-style Q&A over the history, with Detailed, Summary and Bullets modes. Every answer lists its source commits (SHA, author, date, files, relevance) and links each cited SHA to GitHub. Questions are kept in chats: start a **New chat** any time, and switch between or delete past chats. |
+| **Ask** | Chat-style Q&A over the history, with Detailed, Summary and Bullets modes. Every answer lists its source commits (SHA, author, date, files, relevance) and links each cited SHA to GitHub. Questions are kept in chats: start a **New chat** any time, and switch between or delete past chats. Follow-ups such as “who reviewed it?” understand the chat's last three exchanges. |
 | **File timeline** | Pick any file or folder from a searchable list and trace every commit that touched it, with an LLM summary of the phases of change, a monthly activity chart and the full chronology. |
 | **Bug origins** | Every bug-fix commit traced back to the commits that most likely introduced the bug, using `git blame` on the lines the fix changed (the SZZ method). Shows how long each bug lived and which commits sit behind several fixes. No LLM needed. |
 | **Overview** | Commits, contributors, files touched, lines added and removed, linked PRs, weekly activity and a breakdown of change types. |
@@ -110,9 +110,10 @@ flowchart LR
 
 **Answering:**
 
-1. **Hybrid retrieval.** Dense vector search pulls candidates, which are re-ranked with BM25 keyword scores (60% dense, 40% BM25). Exact identifiers such as function names and file paths are found as reliably as concepts.
-2. **Grounded prompt.** The model must answer only from the retrieved commits, cite SHAs and say when the evidence is insufficient.
-3. **Generation.** The user's active provider and model generate the answer. It is rendered as Markdown with no raw HTML allowed and stored in the repository's history.
+1. **Follow-ups.** In a chat with earlier messages, the model first rewrites the question into a standalone one (“who reviewed it?” becomes “who reviewed the OAuth login change in a1b2c3d?”). That is what gets searched, and the answer prompt includes the last three exchanges as context. The UI shows what was searched.
+2. **Hybrid retrieval.** Dense vector search pulls candidates, which are re-ranked with BM25 keyword scores (60% dense, 40% BM25). Exact identifiers such as function names and file paths are found as reliably as concepts.
+3. **Grounded prompt.** The model must answer only from the retrieved commits, cite SHAs and say when the evidence is insufficient.
+4. **Generation.** The user's active provider and model generate the answer. It is rendered as Markdown with no raw HTML allowed and stored in the repository's history.
 
 The analytics pages (overview, hot files, co-change, authors, PRs, commits) are computed directly from the stored chunks, with no LLM or vector calls.
 

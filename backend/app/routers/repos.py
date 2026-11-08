@@ -184,7 +184,8 @@ def repo_pulls(repo: Repo = Depends(owned_repo)):
 
 # ── LLM features ───────────────────────────────────────────────────
 def _query_out(q: Query) -> QueryOut:
-    return QueryOut(id=q.id, kind=q.kind, conversation_id=q.conversation_id, question=q.question, answer=q.answer, mode=q.mode,
+    return QueryOut(id=q.id, kind=q.kind, conversation_id=q.conversation_id, question=q.question,
+                    search_query=q.search_query, answer=q.answer, mode=q.mode,
                     provider=q.provider, model=q.model, sources=json.loads(q.sources_json),
                     created_at=as_utc(q.created_at))
 
@@ -207,8 +208,14 @@ def ask(body: AskIn, repo: Repo = Depends(owned_repo),
     _ready_data(repo)
     chat = _owned_chat(db, repo, body.conversation_id) if body.conversation_id is not None else None
     provider, model, generate = _llm_for(db, user)
+    history = []
+    if chat is not None:
+        recent = db.scalars(select(Query).where(Query.conversation_id == chat.id)
+                            .order_by(Query.created_at.desc(), Query.id.desc()).limit(rag.HISTORY_TURNS)).all()
+        history = [(q.question, q.answer) for q in reversed(recent)]
     try:
-        result = rag.ask(body.question, repo.namespace, generate, mode=body.mode, only_pr=body.only_pr)
+        result = rag.ask(body.question, repo.namespace, generate, mode=body.mode, only_pr=body.only_pr,
+                         history=history)
     except ProviderError as e:
         raise provider_http_error(e)
     if chat is None:
@@ -217,7 +224,9 @@ def ask(body: AskIn, repo: Repo = Depends(owned_repo),
         db.add(chat)
         db.flush()
     chat.updated_at = utcnow()
+    searched = result["search_query"]
     q = Query(repo_id=repo.id, kind="ask", conversation_id=chat.id, question=body.question,
+              search_query=searched if searched != body.question else None,
               answer=result["answer"], mode=body.mode, provider=provider, model=model,
               sources_json=json.dumps(result["sources"]))
     db.add(q)
