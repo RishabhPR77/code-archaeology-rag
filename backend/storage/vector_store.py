@@ -1,5 +1,8 @@
 # storage/vector_store.py
+import functools
 import json
+import re
+import sys
 import threading
 import time
 from pathlib import Path
@@ -22,6 +25,64 @@ HOSTED_RETRIES = 6
 
 # Pinecone allows 40KB of metadata per vector; this keeps most diffs within reach of the LLM
 METADATA_TEXT_CHARS = 4000
+
+# Hybrid search. Keyword matching runs over this many commits fetched by meaning, which at the
+# usual repository sizes is all of them, so it can surface a commit the embedding ranked low.
+SEARCH_POOL = 200
+# The two rankings are merged by position (reciprocal rank fusion), not by raw score: cosine
+# scores bunch together while keyword scores spread out, so mixing scores let keywords decide.
+RRF_K = 60
+KEYWORD_WEIGHT = 1.0   # evals/run_eval.py compares other values
+
+STOPWORDS = frozenset("""
+a about after again all also an and any are as at be because been before being between both but by
+can could did do does doing done during each for from had has have having he her here his how i if in
+into is it its just may me might more most must my no nor not now of off on once only or other our
+out over own same she should so some such than that the their them then there these they this those
+through to too under until up us very was we were what when where which while who whom why will with
+would you your
+""".split())
+_WORD = re.compile(r"\w+")
+_PART = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+")   # HTTPServer -> HTTP, Server; get_user -> get, user
+
+
+def keyword_tokens(text: str) -> list[str]:
+    """Words for keyword matching. Punctuation never sticks to a word, so `click.echo(msg)` gives
+    click, echo, msg; identifiers also count by their parts, so `ensure_object` matches "ensure object"."""
+    tokens = []
+    for word in _WORD.findall(text):
+        low = word.lower()
+        if len(low) > 1 and low not in STOPWORDS:
+            tokens.append(low)
+        if low.isalpha() and (word.islower() or word[1:].islower()):
+            continue  # a plain word like "echo" or "Echo" has no parts
+        parts = _PART.findall(word)
+        if len(parts) > 1:
+            tokens.extend(p for p in (p.lower() for p in parts) if len(p) > 1 and p not in STOPWORDS)
+    return tokens
+
+
+@functools.lru_cache(maxsize=2048)
+def _commit_tokens(text: str) -> tuple[str, ...]:
+    # A commit's text never changes, so it's split once per process; interning shares repeated words
+    return tuple(sys.intern(t) for t in keyword_tokens(text))
+
+
+def fuse(count: int, keyword_scores: list[float], keyword_weight: float = KEYWORD_WEIGHT) -> list[tuple[float, int]]:
+    """Merge the meaning ranking (positions 0..count-1, best first) with the keyword ranking.
+
+    Each ranking adds 1 / (RRF_K + position) for every result it holds; a result with no keyword
+    match gets nothing from that side. Scores are scaled so first place in both comes out as 1.0.
+    Returns (score, position) pairs, best first.
+    """
+    by_keyword = sorted((i for i in range(count) if keyword_scores[i] > 0), key=lambda i: -keyword_scores[i])
+    keyword_rank = {i: r for r, i in enumerate(by_keyword, 1)}
+    best = (1 + keyword_weight) / (RRF_K + 1)
+    fused = [((1 / (RRF_K + i + 1)
+               + (keyword_weight / (RRF_K + keyword_rank[i]) if i in keyword_rank else 0)) / best, i)
+             for i in range(count)]
+    # Equal scores keep the meaning order
+    return sorted(fused, key=lambda x: (-x[0], x[1]))
 
 _model = None
 _model_lock = threading.Lock()
@@ -232,34 +293,26 @@ class VectorStore:
             ]
             self.backend.upsert(vectors, self.namespace)
 
-    # Hybrid search (dense + BM25 rerank)
-    def search(self, question: str, top_k: int = 5,
-               filters: dict = None, alpha: float = 0.6) -> list[dict]:
+    # Hybrid search: meaning (dense vectors) and keywords (BM25), merged by rank
+    def search(self, question: str, top_k: int = 5, filters: dict = None,
+               keyword_weight: float = KEYWORD_WEIGHT) -> list[dict]:
         """
-        1. Dense retrieval (fetch top_k * 4 candidates)
-        2. BM25 keyword re-rank on those candidates
-        3. Combine: final_score = alpha * dense + (1 - alpha) * bm25_normalised (alpha 0.6 by default)
-        4. Return top_k
+        1. Fetch up to SEARCH_POOL commits by meaning, best first
+        2. Score the same commits by keywords (BM25 over keyword_tokens)
+        3. Merge the two rankings with reciprocal rank fusion (see `fuse`)
+        4. Return the top_k, each with a 0-1 score
         """
-        candidate_k = min(max(top_k * 4, 20), 200)
-        candidates  = self.backend.query(_embed_query(question), candidate_k, self.namespace, filters)
+        candidates = self.backend.query(_embed_query(question), max(top_k, SEARCH_POOL), self.namespace, filters)
         if not candidates:
             return []
 
-        # Build BM25 on the candidate texts
-        tokenised = [meta.get("text", "").lower().split() for _, meta in candidates]
-        bm25      = BM25Okapi(tokenised)
-        bm25_raw  = bm25.get_scores(question.lower().split())
-
-        # Normalise BM25 scores to [0, 1]
-        bm25_max  = max(bm25_raw) if max(bm25_raw) > 0 else 1
-        bm25_norm = [s / bm25_max for s in bm25_raw]
-
-        # Combine scores
-        # alpha weights dense; 1 - alpha goes to BM25 (evals/run_eval.py compares other values)
-        combined = [(alpha * dense + (1 - alpha) * bm25_norm[i], meta)
-                    for i, (dense, meta) in enumerate(candidates)]
-        combined.sort(key=lambda x: x[0], reverse=True)
+        keyword_scores = [0.0] * len(candidates)
+        query_tokens = keyword_tokens(question) if keyword_weight else []
+        if query_tokens:
+            docs = [_commit_tokens(meta.get("text", "")) for _, meta in candidates]
+            if any(docs):
+                keyword_scores = list(BM25Okapi(docs).get_scores(query_tokens))
+        combined = [(score, candidates[i][1]) for score, i in fuse(len(candidates), keyword_scores, keyword_weight)]
 
         return [
             {

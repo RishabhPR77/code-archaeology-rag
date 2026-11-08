@@ -113,7 +113,7 @@ flowchart LR
 **Answering:**
 
 1. **Follow-ups.** In a chat with earlier messages, the model first rewrites the question into a standalone one (“who reviewed it?” becomes “who reviewed the OAuth login change in a1b2c3d?”). That is what gets searched, and the answer prompt includes the last three exchanges as context. The UI shows what was searched.
-2. **Hybrid retrieval.** Dense vector search pulls candidates, which are re-ranked with BM25 keyword scores (60% dense, 40% BM25). Exact identifiers such as function names and file paths are found as reliably as concepts. On plain-English questions, the [accuracy check](#accuracy) found dense search alone does better.
+2. **Hybrid retrieval.** Up to 200 commits are fetched by meaning (dense vectors) and also scored by keywords (BM25, with code split into words, so `ctx.ensure_object()` matches "ensure object"). The two rankings are merged by position with reciprocal rank fusion, so neither side's score scale can drown out the other. Exact identifiers such as function names and file paths are found as reliably as concepts; the [accuracy check](#accuracy) measures how well it works.
 3. **Grounded prompt.** The model must answer only from the retrieved commits, cite SHAs and say when the evidence is insufficient.
 4. **Generation.** The user's active provider and model generate the answer. It is rendered as Markdown with no raw HTML allowed and stored in the repository's history.
 
@@ -343,7 +343,7 @@ cd backend
 python -m pytest
 ```
 
-There are 113 tests. GitHub Actions runs them, plus the frontend type-check and build, on every push to `main` and every pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests replace the embedding model with a small stand-in, so CI installs only `requirements.txt`, without torch.
+There are 116 tests. GitHub Actions runs them, plus the frontend type-check and build, on every push to `main` and every pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests replace the embedding model with a small stand-in, so CI installs only `requirements.txt`, without torch.
 
 - **Auth:** sessions, cookie flags, rate limiting and admin handling.
 - **Accounts:** email codes (hashing, expiry, attempt and resend limits), GitHub App sign-in, linking and token refresh, Google sign-in, pre-hijack protection, private-repo cloning, the Brevo request format and the startup check of the Brevo sender. All HTTP is mocked.
@@ -352,6 +352,7 @@ There are 113 tests. GitHub Actions runs them, plus the frontend type-check and 
 - **Ingestion and analytics:** the full ingest-to-answer flow, chats (grouping, privacy, deletion), follow-up questions (rewritten with only the last three exchanges), limits, expiry cleanup and deletion of vectors.
 - **Bug origins:** a real git repository built in the test traces a fix to the commit that introduced the bug, skips docs, tests and add-only fixes, and reports lines older than a shallow clone.
 - **Who broke it?:** file names and stack-trace paths are read from a report, paths match on their last folders, the three signals combine as documented, unrelated commits are left out, the `since` date filters, and commits behind earlier bugs rank higher.
+- **Search:** code is split into words, common words are skipped, the two rankings merge by position, and keywords find a commit the embedding ranked low.
 - **Accuracy check:** the helpers that turn a repository's history into questions remove the answer's own PR text from the index and only use bug fixes from before each report.
 - **Provider adapters:** all five adapters run their **real SDKs against mocked HTTP**, with response bodies shaped like each provider's official API reference. This pins down exactly what is sent (for example, no `temperature` for Anthropic and OpenAI) and how responses and errors are parsed.
 
@@ -371,20 +372,25 @@ How often does search find the right commit, and does Who broke it? point at the
 
 Latest run: the last 200 commits of `pallets/click`, `pallets/flask` and `encode/httpx`, with local BGE-small embeddings. Full tables are in [`backend/evals/RESULTS.md`](backend/evals/RESULTS.md).
 
-| Check | Cases | Right answer first | In the top 3 | In the top 8 |
+| Search | Questions | Right commit first | In the top 3 | In the top 8 |
 |---|---:|---:|---:|---:|
-| Search, PR description questions (app settings) | 118 | 34% | 43% | 53% |
-| Search, PR description questions, dense only | 118 | 44% | 56% | 71% |
-| Search, PR title questions (app settings) | 146 | 44% | 60% | 72% |
-| Search, PR title questions, dense only | 146 | 53% | 66% | 81% |
-| Who broke it? (app weights) | 13 | 31% | 31% | |
-| Who broke it?, newest commit first (baseline) | 13 | 15% | 15% | |
+| PR description questions, before | 263 | 38% | 47% | 55% |
+| PR description questions, now | 263 | **47%** | **64%** | **74%** |
+| PR title questions, before | 320 | 41% | 56% | 69% |
+| PR title questions, now | 320 | **51%** | **70%** | **81%** |
+
+| Who broke it? | Reports | Cause first | In the top 3 | In the top 10 |
+|---|---:|---:|---:|---:|
+| Before | 13 | 31% | 31% | 38% |
+| Now | 13 | 31% | **38%** | **69%** |
+| Baseline: newest commit first | 13 | 15% | 15% | 31% |
 
 What it shows:
 
-- **The BM25 keyword re-rank lowers accuracy.** With the app's 60/40 mix, the right commit is in the top 8 for 53% of description questions; dense search alone gets 71%. Dense alone beat every mix that includes keywords, on every measure and for both question types. The live site uses a different embedding model (Pinecone's llama-text-embed-v2), so this should be confirmed there before the mix changes.
-- **Who broke it? finds the traced cause first twice as often as guessing the newest commit**, but 13 cases are too few to tune its weights. A one-line fix message is also much less to go on than a real bug report.
-- httpx got no pull requests in this run because GitHub's limit for requests without a token ran out, so it only counts toward Who broke it?.
+- **What was wrong.** Search used to add 0.6 × the dense score to 0.4 × the keyword score. Dense scores among the candidates bunch together (a spread of about 0.08), while keyword scores divided by the best one spread across almost the whole 0 to 1 range, so in practice keywords decided the order. Words were also split on spaces, so `echo()` never matched "echo". The result was worse than dense search alone.
+- **The fix.** Rank fusion merges the two rankings by position, keywords are matched over every commit instead of only the top 32 by meaning, and code is split into words. It beats the old search for both question types in every repository, and beats dense search alone on every measure. Each step up in keyword weight helped or tied, up to equal weight, which is what the app uses.
+- **Who broke it? gains from the better search:** the traced cause is in the top 10 for 9 of 13 reports instead of 5. 13 cases are still too few to tune its weights, and a one-line fix message is much less to go on than a real bug report.
+- **The absolute numbers are pessimistic.** The PR text is removed from the index, the local model reads only about 512 tokens of each commit (the live model reads about 2048), and another commit from the same PR counts as a miss. The comparisons between searches are the reliable part. They haven't been repeated with the live site's embedding model yet.
 
 Run it yourself (needs `requirements-local.txt` for the embedding model; about 20 minutes, and it never touches Pinecone, the database or `GITHUB_TOKEN`):
 

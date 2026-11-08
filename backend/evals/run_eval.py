@@ -37,6 +37,7 @@ from datetime import date, datetime  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 import git  # noqa: E402
+from rank_bm25 import BM25Okapi  # noqa: E402
 
 from app.config import get_settings  # noqa: E402
 from evals.cases import rank_of, retrieval_cases, scores, suspect_cases  # noqa: E402
@@ -50,13 +51,15 @@ from storage.vector_store import VectorStore  # noqa: E402
 
 BACKEND = Path(__file__).resolve().parents[1]
 DEFAULT_REPOS = ["pallets/click", "pallets/flask", "encode/httpx"]
-ALPHAS = [1.0, 0.8, 0.6, 0.4, 0.2, 0.0]            # dense share of the hybrid score; the app uses 0.6
+# Keyword side of rank fusion; the app uses vector_store.KEYWORD_WEIGHT
+FUSION_WEIGHTS = sorted({0.25, 0.5, 1.0, vector_store.KEYWORD_WEIGHT})
 WEIGHT_SETS = {
     "App (search 0.5, files 0.3, risk 0.2)": WEIGHTS,
     "Search only": {"search": 1.0, "files": 0.0, "risk": 0.0},
     "No risk (0.7, 0.3, 0)": {"search": 0.7, "files": 0.3, "risk": 0.0},
     "More risk (0.4, 0.3, 0.3)": {"search": 0.4, "files": 0.3, "risk": 0.3},
 }
+OLD_SUSPECTS = "App weights, with the search from before"
 SEARCH_K = (1, 3, 8)       # the Ask tab reads the top 8 results
 SUSPECT_K = (1, 3, 10)     # Who broke it? shows the top 3
 
@@ -91,6 +94,28 @@ def _prs(full_name: str, commits, cache: Path) -> list[PRRecord]:
     return result.prs
 
 
+def _old_search(store: VectorStore, question: str, top_k: int) -> list[dict]:
+    """The search the app used before rank fusion, kept here to compare against: 0.6 x cosine +
+    0.4 x BM25 (words split on spaces, divided by the best score) over the top_k * 4 commits by meaning."""
+    cands = store.backend.query(vector_store._embed_query(question), min(max(top_k * 4, 20), 200), store.namespace, None)
+    if not cands:
+        return []
+    bm = BM25Okapi([m.get("text", "").lower().split() for _, m in cands]).get_scores(question.lower().split())
+    top = max(bm) if max(bm) > 0 else 1
+    mixed = sorted(((0.6 * d + 0.4 * bm[i] / top, m) for i, (d, m) in enumerate(cands)), key=lambda x: -x[0])
+    return [{"metadata": {"sha": m.get("sha", "")}, "score": round(score, 3)} for score, m in mixed[:top_k]]
+
+
+OLD_SEARCH = "Before: score mix (0.6 dense + 0.4 keywords)"
+APP_SEARCH = f"Rank fusion, keyword weight {vector_store.KEYWORD_WEIGHT:g} (the app)"
+SEARCHES = {
+    OLD_SEARCH: _old_search,
+    "Dense only": lambda store, q, k: store.search(q, top_k=k, keyword_weight=0),
+    **{(APP_SEARCH if w == vector_store.KEYWORD_WEIGHT else f"Rank fusion, keyword weight {w:g}"):
+       (lambda store, q, k, w=w: store.search(q, top_k=k, keyword_weight=w)) for w in FUSION_WEIGHTS},
+}
+
+
 def _eval_search(name: str, chunks: list[dict]) -> dict:
     indexed, titles, descriptions = retrieval_cases(chunks)
     store = VectorStore(f"eval_search_{name}")
@@ -98,10 +123,9 @@ def _eval_search(name: str, chunks: list[dict]) -> dict:
     out = {}
     for kind, cases in (("PR title", titles), ("PR description", descriptions)):
         out[kind] = {"cases": len(cases), "ranks": {}}
-        for alpha in ALPHAS:
-            out[kind]["ranks"][alpha] = [
-                rank_of(c["answers"], [h["metadata"]["sha"] for h in store.search(c["question"], top_k=8, alpha=alpha)])
-                for c in cases]
+        for label, search in SEARCHES.items():
+            out[kind]["ranks"][label] = [
+                rank_of(c["answers"], [h["metadata"]["sha"] for h in search(store, c["question"], 8)]) for c in cases]
     store.delete_namespace()
     return out
 
@@ -110,7 +134,7 @@ def _eval_suspects(name: str, chunks: list[dict], fixes: list[dict]) -> dict:
     cases = suspect_cases(fixes)
     store = VectorStore(f"eval_suspects_{name}")
     store.ingest(chunks, overwrite=True)
-    ranks = {label: [] for label in [*WEIGHT_SETS, "Newest commit first"]}
+    ranks = {label: [] for label in [*WEIGHT_SETS, OLD_SUSPECTS, "Newest commit first"]}
     used = 0
     for case in cases:
         before = [c for c in chunks if c["metadata"]["timestamp"] < case["before"]]
@@ -118,13 +142,18 @@ def _eval_suspects(name: str, chunks: list[dict], fixes: list[dict]) -> dict:
         if case["answer"] not in visible:
             continue  # the cause was committed after the fix (a rebase), so no ranking could find it
         used += 1
-        # Search the whole index, then keep the best 30 that existed when the bug was reported
-        hits = [h for h in store.search(case["report"], top_k=200) if h["metadata"]["sha"] in visible][:30]
-        search_scores = {h["metadata"]["sha"]: h["score"] for h in hits}
         caused = origin_counts(case["earlier_fixes"])
+
+        def ranked(search, weights):
+            # Search the whole index, then keep the best 30 that existed when the bug was reported
+            hits = [h for h in search(store, case["report"], 200) if h["metadata"]["sha"] in visible][:30]
+            found, _ = rank_suspects(case["report"], before, {h["metadata"]["sha"]: h["score"] for h in hits},
+                                     caused, top_n=10, weights=weights)
+            return rank_of({case["answer"]}, [s["sha"] for s in found])
+
         for label, weights in WEIGHT_SETS.items():
-            found, _ = rank_suspects(case["report"], before, search_scores, caused, top_n=10, weights=weights)
-            ranks[label].append(rank_of({case["answer"]}, [s["sha"] for s in found]))
+            ranks[label].append(ranked(SEARCHES[APP_SEARCH], weights))
+        ranks[OLD_SUSPECTS].append(ranked(_old_search, WEIGHTS))
         newest = sorted(before, key=lambda c: c["metadata"]["timestamp"], reverse=True)[:10]
         ranks["Newest commit first"].append(rank_of({case["answer"]}, [c["metadata"]["sha"] for c in newest]))
     store.delete_namespace()
@@ -146,7 +175,7 @@ def _header(first: str, ks: tuple, word: str) -> list[str]:
 
 
 def _report(repos: list[dict], commits: int, seconds: float) -> str:
-    search_ranks = lambda kind, alpha: [r for repo in repos for r in repo["search"][kind]["ranks"][alpha]]
+    search_ranks = lambda kind, label: [r for repo in repos for r in repo["search"][kind]["ranks"][label]]
     suspect_ranks = lambda label: [r for repo in repos for r in repo["suspects"]["ranks"][label]]
     lines = [
         "# Accuracy check",
@@ -174,17 +203,22 @@ def _report(repos: list[dict], commits: int, seconds: float) -> str:
         "Found = the answer is in the top k results. MRR (mean reciprocal rank) is 1 when the answer is always "
         "first, 0.5 when it's always second, and counts a miss outside the top 8 as 0.",
         "",
+        "The searches compared: the score mix the app used before; dense (embedding) search alone; and rank "
+        "fusion, which merges the dense ranking with a BM25 keyword ranking by position, at several weights for "
+        "the keyword side. Rank fusion also matches keywords over every commit rather than only the top 32 by "
+        "meaning, and splits code into words properly (`ctx.ensure_object()` gives ctx, ensure, object).",
+        "",
     ]
     for kind in ("PR description", "PR title"):
         lines += [f"### {kind} questions, all repositories together", "",
-                  *_header("Dense share (alpha)", SEARCH_K, "Found in"),
-                  *[_row(f"{a:.1f}" + (" (the app)" if a == 0.6 else " (dense only)" if a == 1.0
-                                       else " (keywords only)" if a == 0.0 else ""),
-                         search_ranks(kind, a), SEARCH_K) for a in ALPHAS], ""]
-    lines += ["### Per repository, with the app's settings (alpha 0.6)", "",
-              *_header("Repository, question", SEARCH_K, "Found in"),
-              *[_row(f"{r['name']}, {kind.split()[1]}", r["search"][kind]["ranks"][0.6], SEARCH_K)
-                for r in repos for kind in ("PR description", "PR title")], ""]
+                  *_header("Search", SEARCH_K, "Found in"),
+                  *[_row(label, search_ranks(kind, label), SEARCH_K) for label in SEARCHES], ""]
+    lines += ["### Per repository, before and now", "",
+              *_header("Repository, question, search", SEARCH_K, "Found in"),
+              *[_row(f"{r['name']}, {kind.split()[1]}, {'now' if label == APP_SEARCH else 'before'}",
+                     r["search"][kind]["ranks"][label], SEARCH_K)
+                for r in repos if r["prs"] for kind in ("PR description", "PR title") for label in (OLD_SEARCH, APP_SEARCH)],
+              ""]
     lines += [
         "## Who broke it?",
         "",
@@ -197,7 +231,7 @@ def _report(repos: list[dict], commits: int, seconds: float) -> str:
         "### All repositories together",
         "",
         *_header("Ranking", SUSPECT_K, "Cause in"),
-        *[_row(label, suspect_ranks(label), SUSPECT_K) for label in [*WEIGHT_SETS, "Newest commit first"]],
+        *[_row(label, suspect_ranks(label), SUSPECT_K) for label in [*WEIGHT_SETS, OLD_SUSPECTS, "Newest commit first"]],
         "",
         "### Per repository, with the app's weights",
         "",
@@ -221,7 +255,7 @@ def main():
     if settings.pinecone_api_key or settings.embedding_provider != "local":
         sys.exit("Refusing to run: the settings still point at Pinecone.")
     args.cache.mkdir(parents=True, exist_ok=True)
-    # Each question is searched once per alpha; embed it once
+    # Each question is searched once per method; embed it once
     vector_store._embed_query = functools.lru_cache(maxsize=None)(vector_store._embed_query)
 
     started, results = time.time(), []
