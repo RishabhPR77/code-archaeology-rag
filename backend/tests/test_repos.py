@@ -22,11 +22,18 @@ PR = PRRecord(number=42, title="add oauth login feature", body="Adds OAuth so us
               labels=["auth"], linked_issues=[], review_comments=[], review_summaries=[], discussion=[])
 
 
+ORIGINS = [{"sha": "a1b2c3d", "message": "fix session cookie expiry bug", "author": "alice",
+            "timestamp": "2026-01-05T10:00:00", "status": "traced", "older_lines": 0, "days": 16,
+            "origins": [{"sha": "9e8d7c6", "message": "add session cookies", "author": "bob",
+                         "timestamp": "2025-12-20T10:00:00", "lines": 3, "ingested": False}]}]
+
+
 @pytest.fixture(autouse=True)
 def fake_ingestion(monkeypatch):
     monkeypatch.setattr(ingest.git.Repo, "clone_from", lambda *a, **k: None)
     monkeypatch.setattr(ingest, "load_commits", lambda path, max_count: COMMITS)
     monkeypatch.setattr(ingest, "fetch_prs", lambda *a, **k: FetchResult(prs=[PR], warnings=[]))
+    monkeypatch.setattr(ingest, "find_bug_origins", lambda path, commits: ORIGINS)
 
 
 def _ready_repo(client):
@@ -193,3 +200,84 @@ def test_expired_repos_are_cleaned_up(user_client):
         db.commit()
     assert ingest.cleanup_expired() == 1
     assert user_client.get(f"/api/repos/{rid}").status_code == 404
+
+
+def test_bug_origins_are_saved_with_a_summary(user_client):
+    rid = _ready_repo(user_client)["id"]
+    r = user_client.get(f"/api/repos/{rid}/origins").json()
+    assert r["computed"] is True
+    assert r["fixes"][0]["origins"][0]["sha"] == "9e8d7c6"
+    assert r["summary"] == {"fixes": 1, "traced": 1, "older": 0, "nothing_to_trace": 0,
+                            "median_days": 16, "repeat_origins": []}
+
+
+def test_bug_origin_failure_does_not_fail_the_ingest(user_client, monkeypatch):
+    def broken(path, commits):
+        raise RuntimeError("blame failed")
+
+    monkeypatch.setattr(ingest, "find_bug_origins", broken)
+    rid = _ready_repo(user_client)["id"]
+    assert user_client.get(f"/api/repos/{rid}/origins").json() == {"computed": False, "summary": None, "fixes": []}
+
+
+def test_questions_are_grouped_into_chats(user_client):
+    rid = _ready_repo(user_client)["id"]
+    _connect_model(user_client)
+
+    def ask(question, chat=None):
+        r = user_client.post(f"/api/repos/{rid}/ask", json={"question": question, "conversation_id": chat})
+        assert r.status_code == 200, r.text
+        return r.json()["conversation_id"]
+
+    first = ask("why was oauth login added?")
+    assert ask("who reviewed it?", first) == first           # a follow-up stays in the same chat
+    second = ask("what changed in sessions?")                # no id starts a new chat
+    assert second != first
+
+    chats = user_client.get(f"/api/repos/{rid}/chats").json()
+    assert [(c["id"], c["title"], c["questions"]) for c in chats] == [
+        (second, "what changed in sessions?", 1), (first, "why was oauth login added?", 2)]
+    messages = user_client.get(f"/api/repos/{rid}/chats/{first}").json()
+    assert [m["question"] for m in messages] == ["why was oauth login added?", "who reviewed it?"]
+
+
+def test_chats_are_private_and_deletable(client):
+    from tests.conftest import register
+    register(client, email="owner@example.com")
+    rid = _ready_repo(client)["id"]
+    _connect_model(client)
+    chat = client.post(f"/api/repos/{rid}/ask", json={"question": "why oauth?"}).json()["conversation_id"]
+
+    client.post("/api/auth/logout")
+    register(client, email="other@example.com")
+    other = _ready_repo(client)["id"]
+    _connect_model(client)
+    # Someone else's chat can't be read or extended, even through their own repository
+    assert client.get(f"/api/repos/{rid}/chats/{chat}").status_code == 404
+    assert client.post(f"/api/repos/{other}/ask",
+                       json={"question": "why oauth?", "conversation_id": chat}).status_code == 404
+
+    client.post("/api/auth/logout")
+    client.post("/api/auth/login", json={"email": "owner@example.com", "password": "correct-horse-battery"})
+    assert client.delete(f"/api/repos/{rid}/chats/{chat}").status_code == 204
+    assert client.get(f"/api/repos/{rid}/chats").json() == []
+    assert client.get(f"/api/repos/{rid}/queries").json() == []
+    assert client.get(f"/api/repos/{rid}/chats/{chat}").status_code == 404
+
+
+def test_a_failed_first_question_leaves_no_empty_chat(user_client):
+    rid = _ready_repo(user_client)["id"]
+    _connect_model(user_client)
+    from tests.conftest import FakeProvider
+    from app.llm.base import ProviderError
+
+    def failing(*a):
+        raise ProviderError("rate_limit", "slow down")
+
+    FakeProvider.generate = staticmethod(failing)
+    try:
+        assert user_client.post(f"/api/repos/{rid}/ask", json={"question": "why oauth?"}).status_code == 429
+    finally:
+        del FakeProvider.generate
+    assert user_client.get(f"/api/repos/{rid}/chats").json() == []
+

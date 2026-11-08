@@ -1,15 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, ChevronDown, GitPullRequest, MessageSquareText, Sparkles, Trash2 } from "lucide-react";
+import { ArrowUp, ChevronDown, GitPullRequest, MessageSquareText, Plus, Sparkles, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { toast } from "sonner";
 
 import { ProviderMark } from "../../components/brand";
 import { Markdown } from "../../components/Markdown";
 import { Button, Card, ConfirmDialog, ErrorNotice, Segmented, Skeleton } from "../../components/ui";
-import { api } from "../../lib/api";
+import { api, ApiError } from "../../lib/api";
 import { useSession } from "../../lib/auth";
-import type { AskMode, QueryResult, Repo } from "../../lib/types";
+import type { AskMode, Chat, QueryResult, Repo } from "../../lib/types";
 import { cn, formatDate, relativeTime, shortSha } from "../../lib/utils";
 
 const SUGGESTIONS = [
@@ -84,130 +84,224 @@ function Exchange({ q, repoUrl }: { q: QueryResult; repoUrl: string }) {
   );
 }
 
+function ChatList({ chats, active, onSelect, onNew, onDelete }: {
+  chats: Chat[]; active: number | null; onSelect: (id: number) => void; onNew: () => void;
+  onDelete: (chat: Chat) => void;
+}) {
+  return (
+    <nav aria-label="Chats" className="space-y-4">
+      <Button variant="secondary" className="w-full justify-start" onClick={onNew} aria-pressed={active === null}>
+        <Plus className="size-4" /> New chat
+      </Button>
+      <div>
+        <p className="px-2.5 text-[11px] font-semibold uppercase tracking-wider text-subtle">Chats</p>
+        {chats.length === 0 ? (
+          <p className="mt-2 px-2.5 text-[13px] text-subtle">Your chats will appear here.</p>
+        ) : (
+          <ul className="mt-2 space-y-0.5">
+            {chats.map((c) => (
+              <li key={c.id} className="group relative">
+                <button onClick={() => onSelect(c.id)} aria-current={active === c.id ? "true" : undefined}
+                        className={cn("block w-full rounded-lg py-2 pr-9 pl-2.5 text-left transition-colors cursor-pointer",
+                          active === c.id ? "bg-accent-soft text-text" : "text-muted hover:bg-surface-2 hover:text-text")}>
+                  <span className="block truncate text-[13px] font-medium">{c.title}</span>
+                  <span className="block text-[11px] text-subtle">
+                    {relativeTime(c.updated_at)} · {c.questions} {c.questions === 1 ? "question" : "questions"}
+                  </span>
+                </button>
+                <button onClick={() => onDelete(c)} aria-label={`Delete chat: ${c.title}`} title="Delete chat"
+                        className="absolute top-2 right-1.5 rounded-md p-1.5 text-subtle opacity-0 transition-opacity hover:text-danger group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 cursor-pointer">
+                  <Trash2 className="size-3.5" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </nav>
+  );
+}
+
 export function Ask({ repo }: { repo: Repo }) {
   const { user } = useSession();
   const qc = useQueryClient();
-  const key = ["repo-data", repo.id, "queries"];
-  const history = useQuery({ queryKey: key, queryFn: () => api.queries(repo.id) });
+  // The open chat lives in the URL, so a reload or a shared link keeps it
+  const [params, setParams] = useSearchParams();
+  const chatId = Number(params.get("chat")) || null;
+  const chatsKey = ["repo-data", repo.id, "chats"];
+  const messagesKey = (id: number) => ["repo-data", repo.id, "chat", id];
+  const chats = useQuery({ queryKey: chatsKey, queryFn: () => api.chats(repo.id) });
+  const messages = useQuery({
+    queryKey: messagesKey(chatId ?? 0),
+    queryFn: () => api.chat(repo.id, chatId!),
+    enabled: chatId !== null,
+  });
   const [question, setQuestion] = useState("");
   const [mode, setMode] = useState<AskMode>("detailed");
   const [onlyPr, setOnlyPr] = useState(false);
-  const [confirmClear, setConfirmClear] = useState(false);
+  const [toDelete, setToDelete] = useState<Chat | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const hasModel = !!(user.active_provider && user.active_model);
 
+  const select = (id: number | null) => {
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (id === null) next.delete("chat");
+      else next.set("chat", String(id));
+      return next;
+    }, { replace: true });
+  };
+
   const ask = useMutation({
-    mutationFn: (q: string) => api.ask(repo.id, q, mode, onlyPr),
-    onSuccess: (result) => {
-      qc.setQueryData<QueryResult[]>(key, (old) => [...(old ?? []), result]);
+    mutationFn: ({ q, chat }: { q: string; chat: number | null }) => api.ask(repo.id, q, mode, onlyPr, chat),
+    onSuccess: (result, { chat }) => {
+      const id = result.conversation_id!;
+      qc.setQueryData<QueryResult[]>(messagesKey(id), (old) => [...(old ?? []), result]);
+      qc.invalidateQueries({ queryKey: chatsKey });
       setQuestion("");
+      // A first question opens its new chat, unless the user has moved to another one meanwhile
+      if (chat === null && chatId === null) select(id);
     },
   });
-  const clear = useMutation({
-    mutationFn: () => api.clearQueries(repo.id),
-    onSuccess: () => { qc.setQueryData(key, []); setConfirmClear(false); toast.success("History cleared"); },
+  const remove = useMutation({
+    mutationFn: (chat: Chat) => api.deleteChat(repo.id, chat.id),
+    onSuccess: (_, chat) => {
+      qc.removeQueries({ queryKey: messagesKey(chat.id) });
+      qc.invalidateQueries({ queryKey: chatsKey });
+      if (chat.id === chatId) select(null);
+      setToDelete(null);
+      toast.success("Chat deleted");
+    },
   });
 
+  // A chat link that no longer exists falls back to a new chat
+  const missing = messages.error instanceof ApiError && messages.error.status === 404;
   useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [history.data?.length, ask.isPending]);
+    if (missing) setParams((prev) => { const next = new URLSearchParams(prev); next.delete("chat"); return next; }, { replace: true });
+  }, [missing, setParams]);
+
+  const items = chatId !== null ? messages.data ?? [] : [];
+  const pendingHere = ask.isPending && ask.variables?.chat === chatId;
+
+  useEffect(() => {
+    if (items.length || pendingHere) bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [items.length, pendingHere, chatId]);
 
   const submit = (q = question) => {
-    if (q.trim().length >= 3 && !ask.isPending) ask.mutate(q.trim());
+    if (q.trim().length >= 3 && !ask.isPending) ask.mutate({ q: q.trim(), chat: chatId });
   };
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
   };
-
-  const items = history.data ?? [];
+  const newChat = () => { select(null); setQuestion(""); };
+  const chatList = chats.data ?? [];
 
   return (
-    <div className="mx-auto max-w-3xl">
-      {!hasModel && (
-        <div className="mb-5 rounded-lg border border-warning/25 bg-warning-soft px-4 py-3 text-[13px] text-warning">
-          Connect a model provider to ask questions. <Link to="/app/settings" className="font-medium underline">Open settings</Link>
+    <div className="grid gap-6 lg:grid-cols-[15rem_minmax(0,1fr)]">
+      <aside className="hidden lg:sticky lg:top-4 lg:block lg:max-h-[calc(100vh-6rem)] lg:self-start lg:overflow-y-auto">
+        <ChatList chats={chatList} active={chatId} onSelect={select} onNew={newChat} onDelete={setToDelete} />
+      </aside>
+
+      <div className="mx-auto w-full max-w-3xl min-w-0">
+        <div className="mb-5 flex items-center gap-2 lg:hidden">
+          <label htmlFor="chat-picker" className="sr-only">Chat</label>
+          <select id="chat-picker" value={chatId ?? ""} onChange={(e) => select(e.target.value ? Number(e.target.value) : null)}
+                  className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-surface px-2.5 text-[13px] text-text">
+            <option value="">New chat</option>
+            {chatList.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
+          </select>
+          <Button variant="secondary" size="sm" className="h-9" onClick={newChat}><Plus className="size-4" /> New</Button>
+          {chatId !== null && (
+            <Button variant="ghost" size="icon" aria-label="Delete this chat"
+                    onClick={() => setToDelete(chatList.find((c) => c.id === chatId) ?? null)}>
+              <Trash2 className="size-4" />
+            </Button>
+          )}
         </div>
-      )}
 
-      {history.isPending && <Skeleton className="h-40 rounded-xl" />}
-
-      {!history.isPending && items.length === 0 && !ask.isPending && (
-        <div className="py-6 text-center">
-          <div className="mx-auto grid size-11 place-items-center rounded-xl bg-accent-soft text-accent"><Sparkles className="size-5" /></div>
-          <h2 className="mt-4 text-base font-semibold">Ask about {repo.full_name}</h2>
-          <p className="mt-1 text-[13px] text-muted">Answers come only from this repository's commits, PRs and reviews, with citations.</p>
-          <div className="mt-6 grid gap-2 sm:grid-cols-2">
-            {SUGGESTIONS.map((s) => (
-              <button key={s} onClick={() => submit(s)} disabled={!hasModel || ask.isPending}
-                      className="rounded-xl border border-border bg-surface p-3 text-left text-[13px] text-muted transition-colors hover:border-border-strong hover:text-text disabled:opacity-50 cursor-pointer">
-                {s}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="space-y-8">
-        {items.map((q) => <Exchange key={q.id} q={q} repoUrl={repo.url} />)}
-        {ask.isPending && (
-          <div className="space-y-3">
-            <div className="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-accent px-4 py-2.5 text-[14px] text-accent-fg">{ask.variables}</div>
-            <Card className="p-5">
-              <div className="flex items-center gap-2 text-xs text-muted">
-                <span className="flex gap-1">
-                  {[0, 1, 2].map((i) => <span key={i} className="size-1.5 animate-bounce rounded-full bg-accent" style={{ animationDelay: `${i * 120}ms` }} />)}
-                </span>
-                Searching history and asking <span className="font-mono">{user.active_model}</span>…
-              </div>
-              <div className="mt-4 space-y-2"><Skeleton className="h-3 w-11/12" /><Skeleton className="h-3 w-9/12" /><Skeleton className="h-3 w-10/12" /></div>
-            </Card>
+        {!hasModel && (
+          <div className="mb-5 rounded-lg border border-warning/25 bg-warning-soft px-4 py-3 text-[13px] text-warning">
+            Connect a model provider to ask questions. <Link to="/app/settings" className="font-medium underline">Open settings</Link>
           </div>
         )}
-      </div>
 
-      {ask.error && <ErrorNotice error={ask.error} className="mt-4" />}
-      <div ref={bottom} />
+        {chatId !== null && messages.isPending && <Skeleton className="h-40 rounded-xl" />}
+        {messages.error && !missing && <ErrorNotice error={messages.error} />}
 
-      <div className="sticky bottom-0 mt-8 bg-gradient-to-t from-bg via-bg to-transparent pt-6 pb-4">
-        <Card className="p-2 focus-within:border-accent">
-          <textarea
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            onKeyDown={onKey}
-            rows={2}
-            maxLength={2000}
-            disabled={!hasModel}
-            placeholder={hasModel ? "Why was the auth module refactored?" : "Connect a model provider first"}
-            aria-label="Your question"
-            className="block w-full resize-none bg-transparent px-2 py-1.5 text-[14px] outline-none placeholder:text-subtle disabled:opacity-60"
-          />
-          <div className="flex flex-wrap items-center gap-2 px-1 pt-1">
-            <Segmented size="sm" value={mode} onChange={setMode} options={MODES} />
-            <label className="flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-muted hover:text-text">
-              <input type="checkbox" checked={onlyPr} onChange={(e) => setOnlyPr(e.target.checked)} className="accent-[var(--accent)]" />
-              Only commits with PRs
-            </label>
-            <div className="flex-1" />
-            {items.length > 0 && (
-              <button onClick={() => setConfirmClear(true)} title="Clear history" aria-label="Clear history"
-                      className="rounded-md p-1.5 text-subtle hover:text-danger cursor-pointer">
-                <Trash2 className="size-3.5" />
-              </button>
-            )}
-            <Button size="icon" className="size-8" onClick={() => submit()} loading={ask.isPending}
-                    disabled={!hasModel || question.trim().length < 3} aria-label="Ask">
-              {!ask.isPending && <ArrowUp className="size-4" />}
-            </Button>
+        {chatId === null && !pendingHere && (
+          <div className="py-6 text-center">
+            <div className="mx-auto grid size-11 place-items-center rounded-xl bg-accent-soft text-accent"><Sparkles className="size-5" /></div>
+            <h2 className="mt-4 text-base font-semibold">Ask about {repo.full_name}</h2>
+            <p className="mt-1 text-[13px] text-muted">Answers come only from this repository's commits, PRs and reviews, with citations.</p>
+            <div className="mt-6 grid gap-2 sm:grid-cols-2">
+              {SUGGESTIONS.map((s) => (
+                <button key={s} onClick={() => submit(s)} disabled={!hasModel || ask.isPending}
+                        className="rounded-xl border border-border bg-surface p-3 text-left text-[13px] text-muted transition-colors hover:border-border-strong hover:text-text disabled:opacity-50 cursor-pointer">
+                  {s}
+                </button>
+              ))}
+            </div>
           </div>
-        </Card>
-        <p className="mt-2 flex items-center justify-center gap-1.5 text-[11px] text-subtle">
-          <MessageSquareText className="size-3" /> Enter to send · Shift+Enter for a new line · uses your own API key
-        </p>
+        )}
+
+        <div className="space-y-8">
+          {items.map((q) => <Exchange key={q.id} q={q} repoUrl={repo.url} />)}
+          {pendingHere && (
+            <div className="space-y-3">
+              <div className="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-accent px-4 py-2.5 text-[14px] text-accent-fg">{ask.variables?.q}</div>
+              <Card className="p-5">
+                <div className="flex items-center gap-2 text-xs text-muted">
+                  <span className="flex gap-1">
+                    {[0, 1, 2].map((i) => <span key={i} className="size-1.5 animate-bounce rounded-full bg-accent" style={{ animationDelay: `${i * 120}ms` }} />)}
+                  </span>
+                  Searching history and asking <span className="font-mono">{user.active_model}</span>…
+                </div>
+                <div className="mt-4 space-y-2"><Skeleton className="h-3 w-11/12" /><Skeleton className="h-3 w-9/12" /><Skeleton className="h-3 w-10/12" /></div>
+              </Card>
+            </div>
+          )}
+        </div>
+
+        {ask.error && ask.variables?.chat === chatId && <ErrorNotice error={ask.error} className="mt-4" />}
+        <div ref={bottom} />
+
+        <div className="sticky bottom-0 mt-8 bg-gradient-to-t from-bg via-bg to-transparent pt-6 pb-4">
+          <Card className="p-2 focus-within:border-accent">
+            <textarea
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              onKeyDown={onKey}
+              rows={2}
+              maxLength={2000}
+              disabled={!hasModel}
+              placeholder={!hasModel ? "Connect a model provider first"
+                : chatId === null ? "Why was the auth module refactored?" : "Ask another question in this chat"}
+              aria-label="Your question"
+              className="block w-full resize-none bg-transparent px-2 py-1.5 text-[14px] outline-none placeholder:text-subtle disabled:opacity-60"
+            />
+            <div className="flex flex-wrap items-center gap-2 px-1 pt-1">
+              <Segmented size="sm" value={mode} onChange={setMode} options={MODES} />
+              <label className="flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-muted hover:text-text">
+                <input type="checkbox" checked={onlyPr} onChange={(e) => setOnlyPr(e.target.checked)} className="accent-[var(--accent)]" />
+                Only commits with PRs
+              </label>
+              <div className="flex-1" />
+              <Button size="icon" className="size-8" onClick={() => submit()} loading={ask.isPending}
+                      disabled={!hasModel || question.trim().length < 3} aria-label="Ask">
+                {!ask.isPending && <ArrowUp className="size-4" />}
+              </Button>
+            </div>
+          </Card>
+          <p className="mt-2 flex items-center justify-center gap-1.5 text-[11px] text-subtle">
+            <MessageSquareText className="size-3" /> Enter to send · Shift+Enter for a new line · uses your own API key
+          </p>
+        </div>
       </div>
 
-      <ConfirmDialog open={confirmClear} onClose={() => setConfirmClear(false)} onConfirm={() => clear.mutate()}
-                     loading={clear.isPending} confirmLabel="Clear history" title="Clear question history?"
-                     description="All questions and answers for this repository are removed." />
+      <ConfirmDialog open={toDelete !== null} onClose={() => setToDelete(null)}
+                     onConfirm={() => toDelete && remove.mutate(toDelete)} loading={remove.isPending}
+                     confirmLabel="Delete chat" title="Delete this chat?"
+                     description={toDelete ? `“${toDelete.title}” and its answers are removed.` : ""} />
     </div>
   );
 }

@@ -47,8 +47,9 @@ Code Archaeologist makes that history answerable:
 
 | | |
 |---|---|
-| **Ask** | Chat-style Q&A over the history, with Detailed, Summary and Bullets modes. Every answer lists its source commits (SHA, author, date, files, relevance) and links each cited SHA to GitHub. History is saved per repository. |
+| **Ask** | Chat-style Q&A over the history, with Detailed, Summary and Bullets modes. Every answer lists its source commits (SHA, author, date, files, relevance) and links each cited SHA to GitHub. Questions are kept in chats: start a **New chat** any time, and switch between or delete past chats. |
 | **File timeline** | Pick any file or folder from a searchable list and trace every commit that touched it, with an LLM summary of the phases of change, a monthly activity chart and the full chronology. |
+| **Bug origins** | Every bug-fix commit traced back to the commits that most likely introduced the bug, using `git blame` on the lines the fix changed (the SZZ method). Shows how long each bug lived and which commits sit behind several fixes. No LLM needed. |
 | **Overview** | Commits, contributors, files touched, lines added and removed, linked PRs, weekly activity and a breakdown of change types. |
 | **Hot files** | The files that change most often, which is where complexity and risk concentrate. |
 | **Co-change** | File pairs that are usually modified together, revealing coupling that static analysis misses. |
@@ -102,6 +103,7 @@ flowchart LR
 
 1. **Clone.** A shallow clone into a temporary folder that is deleted afterwards.
 2. **Extract.** For each commit: SHA, message, author, date, files, line counts and the diff (truncated on line boundaries).
+   **Bug origins** are traced here while the clone exists: for each bug-fix commit, `git blame` on its parent shows which commits last wrote the lines the fix changed. Docs, tests, blank lines and comments are skipped.
 3. **Enrich.** Merged PRs within the commit window are fetched along with their descriptions, labels, review comments and review summaries. They are linked to commits by merge SHA, with a fuzzy fallback for squash merges.
 4. **Chunk.** One chunk per commit. The text combines a classified intent (`BUG FIX`, `FEATURE`, `REFACTOR`, ...), the metadata, the PR context and the diff.
 5. **Embed and index.** Chunks are embedded with `BAAI/bge-small-en-v1.5` in-process, or with Pinecone's hosted `llama-text-embed-v2` in production, and stored in a namespace unique to that repository and user.
@@ -325,8 +327,9 @@ The interactive OpenAPI docs are available at `/api/docs` in development.
 | `GET /api/providers/{id}/models` | Live model list (`?refresh=true` bypasses the 10-minute cache) |
 | `PUT /api/providers/{id}/model` · `PUT /api/providers/active` | Choose a model or the active provider |
 | `POST /api/repos` · `GET /api/repos/{id}` · `POST /api/repos/{id}/resync` · `DELETE /api/repos/{id}` | Ingest and manage repositories (status is polled) |
-| `GET /api/repos/{id}/overview` · `hotfiles` · `cochange` · `authors` · `pulls` · `commits` · `files` | Analytics |
-| `POST /api/repos/{id}/ask` · `GET`/`DELETE /api/repos/{id}/queries` | Q&A and its history |
+| `GET /api/repos/{id}/overview` · `hotfiles` · `cochange` · `authors` · `pulls` · `commits` · `files` · `origins` | Analytics, including bug origins |
+| `POST /api/repos/{id}/ask` | Ask a question; `conversation_id` continues a chat, leaving it out starts a new one |
+| `GET /api/repos/{id}/chats` · `GET`/`DELETE /api/repos/{id}/chats/{chat_id}` | List chats, read one, delete one |
 | `POST /api/repos/{id}/timeline` | File evolution summary |
 
 ## Testing
@@ -340,9 +343,10 @@ There are 72 tests:
 
 - **Auth:** sessions, cookie flags, rate limiting and admin handling.
 - **Accounts:** email codes (hashing, expiry, attempt and resend limits), GitHub App sign-in, linking and token refresh, Google sign-in, pre-hijack protection, private-repo cloning, the Brevo request format and the startup check of the Brevo sender. All HTTP is mocked.
-- **Migrations:** a database created before migrations existed is stamped and upgraded in place.
+- **Migrations:** a database created before migrations existed is stamped and upgraded in place, and questions asked before chats existed are grouped into one chat per repository.
 - **Keys:** encryption, never echoing a key back, and per-user isolation.
-- **Ingestion and analytics:** the full ingest-to-answer flow, limits, expiry cleanup and deletion of vectors.
+- **Ingestion and analytics:** the full ingest-to-answer flow, chats (grouping, privacy, deletion), limits, expiry cleanup and deletion of vectors.
+- **Bug origins:** a real git repository built in the test traces a fix to the commit that introduced the bug, skips docs, tests and add-only fixes, and reports lines older than a shallow clone.
 - **Provider adapters:** all five adapters run their **real SDKs against mocked HTTP**, with response bodies shaped like each provider's official API reference. This pins down exactly what is sent (for example, no `temperature` for Anthropic and OpenAI) and how responses and errors are parsed.
 
 For the frontend, run a type-check and production build:
@@ -366,7 +370,7 @@ code-archaeology-rag/
 │   │   ├── llm/                 # one adapter per provider + live model registry
 │   │   ├── routers/             # auth, github, providers, repos
 │   │   └── services/            # ingest jobs, RAG prompts, OAuth, GitHub, email codes, usage limits
-│   ├── ingestion/               # git_loader, github_enricher, chunker
+│   ├── ingestion/               # git_loader, github_enricher, chunker, bug_origins
 │   ├── storage/vector_store.py  # local or hosted embeddings, Pinecone or local store, hybrid search
 │   ├── retrieval/analytics.py   # hot files, co-change, authors, PRs, timelines
 │   ├── migrations/              # Alembic schema migrations (run on every start)

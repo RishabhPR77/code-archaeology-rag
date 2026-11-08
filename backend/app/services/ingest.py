@@ -1,5 +1,5 @@
 # app/services/ingest.py
-"""Background ingestion: clone -> extract commits -> fetch PRs -> chunk -> embed."""
+"""Background ingestion: clone -> extract commits -> trace bug origins -> fetch PRs -> chunk -> embed."""
 import json
 import logging
 import os
@@ -15,6 +15,7 @@ from app.config import get_settings
 from app.db import SessionLocal
 from app.models import Repo, RepoData, User, utcnow
 from app.services import github
+from ingestion.bug_origins import find_bug_origins
 from ingestion.chunker import build_chunks
 from ingestion.git_loader import load_commits
 from ingestion.github_enricher import fetch_prs
@@ -85,6 +86,14 @@ def run_ingest(repo_id: str):
             if not commits:
                 raise RuntimeError("No commits could be read from this repository.")
 
+            _update(repo_id, stage_message="Tracing where bugs came from")
+            try:
+                origins = find_bug_origins(tmp, commits)
+            except Exception:
+                # Nothing else depends on it, so a failure here doesn't fail the ingest
+                log.exception("Couldn't trace bug origins for %s", full_name)
+                origins = None
+
             _update(repo_id, status="fetching_prs", stage_message="Fetching pull requests and reviews")
             prs, warnings = [], []
             try:
@@ -108,6 +117,7 @@ def run_ingest(repo_id: str):
                     repo.data = RepoData(repo_id=repo_id, chunks_json=json.dumps(chunks))
                 else:
                     repo.data.chunks_json = json.dumps(chunks)
+                repo.data.origins_json = json.dumps(origins) if origins is not None else None
                 repo.status = "ready"
                 repo.stage_message = "Ready"
                 repo.commit_count = len(chunks)

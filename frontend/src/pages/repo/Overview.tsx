@@ -10,7 +10,7 @@ import { tooltipStyle, useThemeColors } from "../../lib/theme";
 import type { CommitType, Repo } from "../../lib/types";
 import { basename, COMMIT_TYPES, formatDate, formatNumber } from "../../lib/utils";
 
-function Stat({ icon, label, value, sub }: { icon: ReactNode; label: string; value: ReactNode; sub?: ReactNode }) {
+export function Stat({ icon, label, value, sub }: { icon: ReactNode; label: string; value: ReactNode; sub?: ReactNode }) {
   return (
     <Card className="p-4">
       <div className="flex items-center gap-2 text-xs text-muted">{icon}{label}</div>

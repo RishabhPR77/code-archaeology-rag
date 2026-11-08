@@ -181,6 +181,7 @@ class AskIn(BaseModel):
     question: str = Field(min_length=3, max_length=2000)
     mode:     Literal["detailed", "summary", "bullets"] = "detailed"
     only_pr:  bool = False
+    conversation_id: int | None = None   # None starts a new chat
 
 
 class SourceOut(BaseModel):
@@ -197,6 +198,7 @@ class SourceOut(BaseModel):
 class QueryOut(BaseModel):
     id:         int
     kind:       str
+    conversation_id: int | None
     question:   str
     answer:     str
     mode:       str
@@ -204,6 +206,14 @@ class QueryOut(BaseModel):
     model:      str
     sources:    list[SourceOut]
     created_at: datetime
+
+
+class ConversationOut(BaseModel):
+    id:         int
+    title:      str
+    questions:  int
+    created_at: datetime
+    updated_at: datetime
 
 
 class TimelineIn(BaseModel):

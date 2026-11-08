@@ -80,14 +80,30 @@ class Repo(Base):
     user:    Mapped[User] = relationship(back_populates="repos")
     data:    Mapped["RepoData | None"] = relationship(cascade="all, delete-orphan", lazy="select")
     queries: Mapped[list["Query"]] = relationship(cascade="all, delete-orphan")
+    conversations: Mapped[list["Conversation"]] = relationship(cascade="all, delete-orphan")
 
 
 class RepoData(Base):
     """Commit chunks for a repo, kept apart so repo listings don't load the blob."""
     __tablename__ = "repo_data"
 
-    repo_id:     Mapped[str] = mapped_column(ForeignKey("repos.id", ondelete="CASCADE"), primary_key=True)
-    chunks_json: Mapped[str] = mapped_column(Text)
+    repo_id:      Mapped[str] = mapped_column(ForeignKey("repos.id", ondelete="CASCADE"), primary_key=True)
+    chunks_json:  Mapped[str] = mapped_column(Text)
+    # Bug fixes traced to their likely origins (see ingestion/bug_origins.py); None until computed
+    origins_json: Mapped[str | None] = mapped_column(Text)
+
+
+class Conversation(Base):
+    """A chat on the Ask tab: one thread of questions about a repo."""
+    __tablename__ = "conversations"
+
+    id:         Mapped[int] = mapped_column(primary_key=True)
+    repo_id:    Mapped[str] = mapped_column(ForeignKey("repos.id", ondelete="CASCADE"), index=True)
+    title:      Mapped[str] = mapped_column(String(200))                 # the first question, shortened
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    queries: Mapped[list["Query"]] = relationship(cascade="all, delete-orphan")
 
 
 class Query(Base):
@@ -96,6 +112,8 @@ class Query(Base):
     id:           Mapped[int] = mapped_column(primary_key=True)
     repo_id:      Mapped[str] = mapped_column(ForeignKey("repos.id", ondelete="CASCADE"), index=True)
     kind:         Mapped[str] = mapped_column(String(16))                # ask | timeline
+    conversation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"), index=True)   # set for every ask
     question:     Mapped[str] = mapped_column(Text)
     answer:       Mapped[str] = mapped_column(Text)
     mode:         Mapped[str] = mapped_column(String(20), default="detailed")

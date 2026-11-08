@@ -3,7 +3,7 @@ import json
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query as Q, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import llm
@@ -11,13 +11,14 @@ from app.config import get_settings
 from app.db import get_db
 from app.deps import owned_repo, verified_user
 from app.llm import ProviderError
-from app.models import IngestEvent, Query, Repo, User
+from app.models import Conversation, IngestEvent, Query, Repo, RepoData, User, utcnow
 from app.routers.providers import provider_http_error
-from app.schemas import (GITHUB_URL, AskIn, QueryOut, RepoIn, RepoOut, TimelineIn, TimelineOut,
+from app.schemas import (GITHUB_URL, AskIn, ConversationOut, QueryOut, RepoIn, RepoOut, TimelineIn, TimelineOut,
                          as_utc)
 from app.security import decrypt_secret
 from app.services import github, ingest, rag
 from app.services.users import credential, limits_for
+from ingestion import bug_origins
 from retrieval import analytics
 
 router = APIRouter(prefix="/api/repos", tags=["repos"])
@@ -33,10 +34,14 @@ def repo_out(repo: Repo) -> RepoOut:
                    expires_at=as_utc(repo.expires_at))
 
 
-def _chunks(repo: Repo) -> list[dict]:
+def _ready_data(repo: Repo) -> RepoData:
     if repo.status != "ready" or repo.data is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "This repository is still being ingested")
-    return json.loads(repo.data.chunks_json)
+    return repo.data
+
+
+def _chunks(repo: Repo) -> list[dict]:
+    return json.loads(_ready_data(repo).chunks_json)
 
 
 def _check_ingest_allowed(db: Session, user: User, max_commits: int, new_repo: bool):
@@ -152,6 +157,16 @@ def repo_hotfiles(limit: int = Q(15, ge=1, le=100), repo: Repo = Depends(owned_r
     return analytics.hottest_files(_chunks(repo), top_n=limit)
 
 
+@router.get("/{repo_id}/origins")
+def repo_origins(repo: Repo = Depends(owned_repo)):
+    raw = _ready_data(repo).origins_json
+    if raw is None:
+        # Ingested before bug origins existed, or tracing failed: a re-sync computes them
+        return {"computed": False, "summary": None, "fixes": []}
+    fixes = json.loads(raw)
+    return {"computed": True, "summary": bug_origins.summarize(fixes), "fixes": fixes}
+
+
 @router.get("/{repo_id}/cochange")
 def repo_cochange(limit: int = Q(10, ge=1, le=100), repo: Repo = Depends(owned_repo)):
     return analytics.co_change_analysis(_chunks(repo), top_n=limit)
@@ -169,25 +184,72 @@ def repo_pulls(repo: Repo = Depends(owned_repo)):
 
 # ── LLM features ───────────────────────────────────────────────────
 def _query_out(q: Query) -> QueryOut:
-    return QueryOut(id=q.id, kind=q.kind, question=q.question, answer=q.answer, mode=q.mode,
+    return QueryOut(id=q.id, kind=q.kind, conversation_id=q.conversation_id, question=q.question, answer=q.answer, mode=q.mode,
                     provider=q.provider, model=q.model, sources=json.loads(q.sources_json),
                     created_at=as_utc(q.created_at))
+
+
+def _chat_title(question: str) -> str:
+    text = " ".join(question.split())
+    return text if len(text) <= 80 else text[:79].rstrip() + "…"
+
+
+def _owned_chat(db: Session, repo: Repo, chat_id: int) -> Conversation:
+    chat = db.get(Conversation, chat_id)
+    if chat is None or chat.repo_id != repo.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Chat not found")
+    return chat
 
 
 @router.post("/{repo_id}/ask", response_model=QueryOut)
 def ask(body: AskIn, repo: Repo = Depends(owned_repo),
         user: User = Depends(verified_user), db: Session = Depends(get_db)):
-    _chunks(repo)  # ensures the repo is ready
+    _ready_data(repo)
+    chat = _owned_chat(db, repo, body.conversation_id) if body.conversation_id is not None else None
     provider, model, generate = _llm_for(db, user)
     try:
         result = rag.ask(body.question, repo.namespace, generate, mode=body.mode, only_pr=body.only_pr)
     except ProviderError as e:
         raise provider_http_error(e)
-    q = Query(repo_id=repo.id, kind="ask", question=body.question, answer=result["answer"],
-              mode=body.mode, provider=provider, model=model, sources_json=json.dumps(result["sources"]))
+    if chat is None:
+        # Created only once there is an answer, so a failed first question leaves no empty chat
+        chat = Conversation(repo_id=repo.id, title=_chat_title(body.question))
+        db.add(chat)
+        db.flush()
+    chat.updated_at = utcnow()
+    q = Query(repo_id=repo.id, kind="ask", conversation_id=chat.id, question=body.question,
+              answer=result["answer"], mode=body.mode, provider=provider, model=model,
+              sources_json=json.dumps(result["sources"]))
     db.add(q)
     db.commit()
     return _query_out(q)
+
+
+@router.get("/{repo_id}/chats", response_model=list[ConversationOut])
+def list_chats(repo: Repo = Depends(owned_repo), db: Session = Depends(get_db)):
+    rows = db.execute(
+        select(Conversation, func.count(Query.id))
+        .outerjoin(Query, Query.conversation_id == Conversation.id)
+        .where(Conversation.repo_id == repo.id)
+        .group_by(Conversation.id)
+        .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
+        .limit(100))
+    return [ConversationOut(id=c.id, title=c.title, questions=n, created_at=as_utc(c.created_at),
+                            updated_at=as_utc(c.updated_at)) for c, n in rows]
+
+
+@router.get("/{repo_id}/chats/{chat_id}", response_model=list[QueryOut])
+def chat_messages(chat_id: int, repo: Repo = Depends(owned_repo), db: Session = Depends(get_db)):
+    chat = _owned_chat(db, repo, chat_id)
+    qs = db.scalars(select(Query).where(Query.conversation_id == chat.id)
+                    .order_by(Query.created_at.asc(), Query.id.asc()))
+    return [_query_out(q) for q in qs]
+
+
+@router.delete("/{repo_id}/chats/{chat_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_chat(chat_id: int, repo: Repo = Depends(owned_repo), db: Session = Depends(get_db)):
+    db.delete(_owned_chat(db, repo, chat_id))
+    db.commit()
 
 
 @router.get("/{repo_id}/queries", response_model=list[QueryOut])
@@ -199,6 +261,8 @@ def list_queries(repo: Repo = Depends(owned_repo), db: Session = Depends(get_db)
 
 @router.delete("/{repo_id}/queries", status_code=status.HTTP_204_NO_CONTENT)
 def clear_queries(repo: Repo = Depends(owned_repo), db: Session = Depends(get_db)):
+    for chat in db.scalars(select(Conversation).where(Conversation.repo_id == repo.id)):
+        db.delete(chat)
     for q in db.scalars(select(Query).where(Query.repo_id == repo.id)):
         db.delete(q)
     db.commit()

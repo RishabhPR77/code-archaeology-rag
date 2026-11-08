@@ -169,6 +169,7 @@ export type AskMode = "detailed" | "summary" | "bullets";
 export interface QueryResult {
   id: number;
   kind: string;
+  conversation_id: number | null;
   question: string;
   answer: string;
   mode: AskMode;
@@ -178,12 +179,53 @@ export interface QueryResult {
   created_at: string;
 }
 
+export interface Chat {
+  id: number;
+  title: string;
+  questions: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface RepoFile {
   path: string;
   changes: number;
 }
 
 export type TimelineMatch = "contains" | "exact" | "folder";
+
+export interface BugOrigin {
+  sha: string;
+  message: string;
+  author: string;
+  timestamp: string;
+  lines: number;
+  ingested: boolean;
+}
+
+export interface BugFix {
+  sha: string;
+  message: string;
+  author: string;
+  timestamp: string;
+  status: "traced" | "older" | "nothing_to_trace" | "error";
+  origins: BugOrigin[];
+  older_lines: number;
+  days: number | null;
+}
+
+export interface OriginsResult {
+  computed: boolean;
+  summary: {
+    fixes: number;
+    traced: number;
+    older: number;
+    nothing_to_trace: number;
+    median_days: number | null;
+    repeat_origins: (Omit<BugOrigin, "lines"> & { fixes: number })[];
+  } | null;
+  fixes: BugFix[];
+}
 
 export interface TimelineResult {
   path: string;

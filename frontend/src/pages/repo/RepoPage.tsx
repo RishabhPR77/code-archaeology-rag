@@ -12,6 +12,7 @@ import type { Repo } from "../../lib/types";
 import { cn, formatNumber, INGEST_STAGES, isIngesting, relativeTime } from "../../lib/utils";
 import { RepoStatusBadge } from "../Dashboard";
 import { Ask } from "./Ask";
+import { BugOrigins } from "./BugOrigins";
 import { Authors, CoChange, HotFiles } from "./Insights";
 import { Commits } from "./Commits";
 import { Overview } from "./Overview";
@@ -22,6 +23,7 @@ const TABS = [
   { id: "overview", label: "Overview" },
   { id: "ask", label: "Ask" },
   { id: "timeline", label: "File timeline" },
+  { id: "origins", label: "Bug origins" },
   { id: "hotfiles", label: "Hot files" },
   { id: "cochange", label: "Co-change" },
   { id: "authors", label: "Authors" },
@@ -192,6 +194,7 @@ export default function RepoPage() {
                 {activeTab === "overview" && <Overview repo={r} />}
                 {activeTab === "ask" && <Ask repo={r} />}
                 {activeTab === "timeline" && <Timeline repo={r} />}
+                {activeTab === "origins" && <BugOrigins repo={r} />}
                 {activeTab === "hotfiles" && <HotFiles repo={r} />}
                 {activeTab === "cochange" && <CoChange repo={r} />}
                 {activeTab === "authors" && <Authors repo={r} />}

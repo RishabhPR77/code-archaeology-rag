@@ -1,6 +1,7 @@
 import type {
-  AskMode, AuthConfig, Author, CoChange, Commit, GitHubRepo, GitHubStatus, HotFile, Me, Model,
-  Overview, Provider, ProviderId, PullRequest, QueryResult, Repo, RepoFile, TimelineMatch, TimelineResult,
+  AskMode, AuthConfig, Author, Chat, CoChange, Commit, GitHubRepo, GitHubStatus, HotFile, Me, Model,
+  OriginsResult, Overview, Provider, ProviderId, PullRequest, QueryResult, Repo, RepoFile, TimelineMatch,
+  TimelineResult,
 } from "./types";
 
 export class ApiError extends Error {
@@ -89,13 +90,16 @@ export const api = {
   commits: (id: string) => get<Commit[]>(`/repos/${id}/commits`),
   files: (id: string) => get<RepoFile[]>(`/repos/${id}/files`),
   hotfiles: (id: string, limit: number) => get<HotFile[]>(`/repos/${id}/hotfiles?limit=${limit}`),
+  origins: (id: string) => get<OriginsResult>(`/repos/${id}/origins`),
   cochange: (id: string, limit: number) => get<CoChange[]>(`/repos/${id}/cochange?limit=${limit}`),
   authors: (id: string) => get<Author[]>(`/repos/${id}/authors`),
   pulls: (id: string) => get<PullRequest[]>(`/repos/${id}/pulls`),
-  queries: (id: string) => get<QueryResult[]>(`/repos/${id}/queries`),
-  clearQueries: (id: string) => del(`/repos/${id}/queries`),
-  ask: (id: string, question: string, mode: AskMode, onlyPr: boolean) =>
-    post<QueryResult>(`/repos/${id}/ask`, { question, mode, only_pr: onlyPr }),
+  chats: (id: string) => get<Chat[]>(`/repos/${id}/chats`),
+  chat: (id: string, chatId: number) => get<QueryResult[]>(`/repos/${id}/chats/${chatId}`),
+  deleteChat: (id: string, chatId: number) => del(`/repos/${id}/chats/${chatId}`),
+  // chatId null starts a new chat; the answer says which chat it landed in
+  ask: (id: string, question: string, mode: AskMode, onlyPr: boolean, chatId: number | null) =>
+    post<QueryResult>(`/repos/${id}/ask`, { question, mode, only_pr: onlyPr, conversation_id: chatId }),
   timeline: (id: string, path: string, match: TimelineMatch) =>
     post<TimelineResult>(`/repos/${id}/timeline`, { path, match }),
 };

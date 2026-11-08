@@ -20,15 +20,22 @@ def test_pre_migration_database_is_upgraded_in_place():
             max_commits INTEGER NOT NULL, status VARCHAR(20) NOT NULL, stage_message VARCHAR(300) NOT NULL,
             error TEXT, warnings TEXT NOT NULL, commit_count INTEGER NOT NULL, pr_count INTEGER NOT NULL,
             created_at DATETIME NOT NULL, ready_at DATETIME, expires_at DATETIME)""")
+        c.exec_driver_sql("CREATE TABLE repo_data (repo_id VARCHAR(32) PRIMARY KEY REFERENCES repos (id), "
+                          "chunks_json TEXT NOT NULL)")
+        c.exec_driver_sql("""CREATE TABLE queries (id INTEGER PRIMARY KEY, repo_id VARCHAR(32) NOT NULL REFERENCES repos (id),
+            kind VARCHAR(16) NOT NULL, question TEXT NOT NULL, answer TEXT NOT NULL, mode VARCHAR(20) NOT NULL,
+            provider VARCHAR(32) NOT NULL, model VARCHAR(200) NOT NULL, sources_json TEXT NOT NULL,
+            created_at DATETIME NOT NULL)""")
         c.exec_driver_sql("INSERT INTO users (email, name, is_admin, created_at) "
                           "VALUES ('existing@example.com', 'Existing', 0, '2026-10-01')")
     init_db()
     init_db()  # every later start is a no-op
     with engine.connect() as c:
-        assert c.execute(text("select version_num from alembic_version")).scalar() == "0002"
+        assert c.execute(text("select version_num from alembic_version")).scalar() == "0004"
         assert c.execute(text("select email_verified from users")).scalar() == 1   # existing users stay in
     assert "email_verifications" in inspect(engine).get_table_names()
     assert "is_private" in {col["name"] for col in inspect(engine).get_columns("repos")}
+    assert "origins_json" in {col["name"] for col in inspect(engine).get_columns("repo_data")}
 
 
 @pytest.mark.parametrize("given, expected", [
@@ -64,3 +71,28 @@ def test_single_container_serves_spa(monkeypatch, tmp_path):
         assert deep.headers["x-content-type-options"] == "nosniff"
         assert "nope" not in c.get("/../secret.txt").text                 # no path traversal
         assert "nope" not in c.get("/%2e%2e/secret.txt").text
+
+
+def test_existing_questions_move_into_one_chat_per_repo():
+    from alembic import command
+    from app.db import _alembic
+
+    Base.metadata.drop_all(engine)
+    with engine.begin() as c:
+        c.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")
+        command.upgrade(_alembic(c), "0003")
+        c.exec_driver_sql("INSERT INTO users (email, name, is_admin, email_verified, created_at) "
+                          "VALUES ('a@example.com', 'A', 0, 1, '2026-10-01')")
+        c.exec_driver_sql("INSERT INTO repos (id, user_id, url, full_name, is_private, namespace, max_commits, "
+                          "status, stage_message, warnings, commit_count, pr_count, created_at) VALUES "
+                          "('r1', 1, 'u', 'o/n', 0, 'ns1', 50, 'ready', 'Ready', '', 1, 0, '2026-10-01')")
+        for i, q in enumerate(["first question?", "second question?"]):
+            c.exec_driver_sql("INSERT INTO queries (repo_id, kind, question, answer, mode, provider, model, "
+                              f"sources_json, created_at) VALUES ('r1', 'ask', '{q}', 'a', 'detailed', 'groq', "
+                              f"'m', '[]', '2026-10-0{i + 2}')")
+        command.upgrade(_alembic(c), "head")
+    with engine.connect() as c:
+        chats = c.execute(text("select id, title, repo_id from conversations")).all()
+        assert [(t, r) for _, t, r in chats] == [("first question?", "r1")]
+        assert {row[0] for row in c.execute(text("select conversation_id from queries"))} == {chats[0][0]}
+
