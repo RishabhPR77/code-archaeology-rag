@@ -50,6 +50,7 @@ Code Archaeologist makes that history answerable:
 | **Ask** | Chat-style Q&A over the history, with Detailed, Summary and Bullets modes. Every answer lists its source commits (SHA, author, date, files, relevance) and links each cited SHA to GitHub. Questions are kept in chats: start a **New chat** any time, and switch between or delete past chats. Follow-ups such as “who reviewed it?” understand the chat's last three exchanges. |
 | **File timeline** | Pick any file or folder from a searchable list and trace every commit that touched it, with an LLM summary of the phases of change, a monthly activity chart and the full chronology. |
 | **Bug origins** | Every bug-fix commit traced back to the commits that most likely introduced the bug, using `git blame` on the lines the fix changed (the SZZ method). Shows how long each bug lived and which commits sit behind several fixes. No LLM needed. |
+| **Who broke it?** | Describe a bug or paste an error, and get the three most likely culprit commits. They're ranked by how well they match the report (hybrid search), whether they changed files it names (stack-trace paths included), and a risk signal from the type of change and Bug origins. Your model explains each suspect and suggests how to confirm it. Suspects, not proof. |
 | **Overview** | Commits, contributors, files touched, lines added and removed, linked PRs, weekly activity and a breakdown of change types. |
 | **Hot files** | The files that change most often, which is where complexity and risk concentrate. |
 | **Co-change** | File pairs that are usually modified together, revealing coupling that static analysis misses. |
@@ -332,6 +333,7 @@ The interactive OpenAPI docs are available at `/api/docs` in development.
 | `POST /api/repos/{id}/ask` | Ask a question; `conversation_id` continues a chat, leaving it out starts a new one |
 | `GET /api/repos/{id}/chats` · `GET`/`DELETE /api/repos/{id}/chats/{chat_id}` | List chats, read one, delete one |
 | `POST /api/repos/{id}/timeline` | File evolution summary |
+| `POST /api/repos/{id}/suspects` | Rank likely culprit commits for a bug report (`description`, optional `since` date) |
 
 ## Testing
 

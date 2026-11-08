@@ -325,3 +325,32 @@ def test_rewrites_are_cleaned_up(reply, expected):
     from app.services.rag import _clean_rewrite
     assert _clean_rewrite(reply, "who reviewed it?") == expected
 
+
+def test_suspects_rank_commits_and_explain_with_the_users_model(user_client):
+    from tests.conftest import FakeProvider
+    rid = _ready_repo(user_client)["id"]
+    report = {"description": "Login breaks with a KeyError in src/auth.py after the latest release"}
+
+    # No model connected: the ranking still works, there's just no explanation
+    r = user_client.post(f"/api/repos/{rid}/suspects", json=report)
+    assert r.status_code == 200, r.text
+    plain = r.json()
+    assert plain["answer"] is None and plain["mentioned_files"] == ["src/auth.py"]
+    assert {s["sha"] for s in plain["suspects"][:2]} == {"b2c3d4e", "c3d4e5f"}   # both changed src/auth.py
+    assert all(any("src/auth.py" in why for why in s["reasons"]) for s in plain["suspects"][:2])
+
+    _connect_model(user_client)
+    explained = user_client.post(f"/api/repos/{rid}/suspects", json=report).json()
+    assert explained["answer"].startswith("Answer from claude-test-1")
+    assert explained["provider"] == "anthropic" and explained["model"] == "claude-test-1"
+    prompt = FakeProvider.calls[-1]["prompt"]
+    assert "BUG REPORT:\nLogin breaks with a KeyError" in prompt and "Suspect 1 · commit" in prompt
+
+
+def test_suspects_validate_input_and_filter_by_date(user_client):
+    rid = _ready_repo(user_client)["id"]
+    assert user_client.post(f"/api/repos/{rid}/suspects", json={"description": "broken"}).status_code == 422
+    late = user_client.post(f"/api/repos/{rid}/suspects",
+                            json={"description": "Login breaks in src/auth.py", "since": "2026-01-20"}).json()
+    assert [s["sha"] for s in late["suspects"]] == ["c3d4e5f"]          # the only commit after Jan 20
+

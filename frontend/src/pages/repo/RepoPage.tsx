@@ -17,6 +17,7 @@ import { Authors, CoChange, HotFiles } from "./Insights";
 import { Commits } from "./Commits";
 import { Overview } from "./Overview";
 import { PullRequests } from "./PullRequests";
+import { Suspects } from "./Suspects";
 import { Timeline } from "./Timeline";
 
 const TABS = [
@@ -24,6 +25,7 @@ const TABS = [
   { id: "ask", label: "Ask" },
   { id: "timeline", label: "File timeline" },
   { id: "origins", label: "Bug origins" },
+  { id: "suspects", label: "Who broke it?" },
   { id: "hotfiles", label: "Hot files" },
   { id: "cochange", label: "Co-change" },
   { id: "authors", label: "Authors" },
@@ -195,6 +197,7 @@ export default function RepoPage() {
                 {activeTab === "ask" && <Ask repo={r} />}
                 {activeTab === "timeline" && <Timeline repo={r} />}
                 {activeTab === "origins" && <BugOrigins repo={r} />}
+                {activeTab === "suspects" && <Suspects repo={r} />}
                 {activeTab === "hotfiles" && <HotFiles repo={r} />}
                 {activeTab === "cochange" && <CoChange repo={r} />}
                 {activeTab === "authors" && <Authors repo={r} />}

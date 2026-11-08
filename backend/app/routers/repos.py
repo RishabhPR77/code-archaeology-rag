@@ -13,7 +13,7 @@ from app.deps import owned_repo, verified_user
 from app.llm import ProviderError
 from app.models import Conversation, IngestEvent, Query, Repo, RepoData, User, utcnow
 from app.routers.providers import provider_http_error
-from app.schemas import (GITHUB_URL, AskIn, ConversationOut, QueryOut, RepoIn, RepoOut, TimelineIn, TimelineOut,
+from app.schemas import (GITHUB_URL, AskIn, ConversationOut, QueryOut, SuspectsIn, SuspectsOut, RepoIn, RepoOut, TimelineIn, TimelineOut,
                          as_utc)
 from app.security import decrypt_secret
 from app.services import github, ingest, rag
@@ -275,6 +275,22 @@ def clear_queries(repo: Repo = Depends(owned_repo), db: Session = Depends(get_db
     for q in db.scalars(select(Query).where(Query.repo_id == repo.id)):
         db.delete(q)
     db.commit()
+
+
+@router.post("/{repo_id}/suspects", response_model=SuspectsOut)
+def suspects(body: SuspectsIn, repo: Repo = Depends(owned_repo),
+             user: User = Depends(verified_user), db: Session = Depends(get_db)):
+    data = _ready_data(repo)
+    # The ranking needs no model; an explanation is added when one is connected
+    cred = credential(db, user, user.active_provider) if user.active_provider else None
+    provider, model, generate = _llm_for(db, user) if cred and cred.model else (None, None, None)
+    try:
+        result = rag.find_suspects(body.description, repo.namespace, json.loads(data.chunks_json),
+                                   json.loads(data.origins_json) if data.origins_json else None,
+                                   body.since.isoformat() if body.since else None, generate)
+    except ProviderError as e:
+        raise provider_http_error(e)
+    return SuspectsOut(**result, provider=provider, model=model)
 
 
 @router.post("/{repo_id}/timeline", response_model=TimelineOut)

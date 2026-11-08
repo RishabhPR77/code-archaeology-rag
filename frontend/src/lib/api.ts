@@ -1,7 +1,7 @@
 import type {
   AskMode, AuthConfig, Author, Chat, CoChange, Commit, GitHubRepo, GitHubStatus, HotFile, Me, Model,
-  OriginsResult, Overview, Provider, ProviderId, PullRequest, QueryResult, Repo, RepoFile, TimelineMatch,
-  TimelineResult,
+  OriginsResult, Overview, Provider, ProviderId, PullRequest, QueryResult, Repo, RepoFile, SuspectsResult,
+  TimelineMatch, TimelineResult,
 } from "./types";
 
 export class ApiError extends Error {
@@ -100,6 +100,8 @@ export const api = {
   // chatId null starts a new chat; the answer says which chat it landed in
   ask: (id: string, question: string, mode: AskMode, onlyPr: boolean, chatId: number | null) =>
     post<QueryResult>(`/repos/${id}/ask`, { question, mode, only_pr: onlyPr, conversation_id: chatId }),
+  suspects: (id: string, description: string, since: string | null) =>
+    post<SuspectsResult>(`/repos/${id}/suspects`, { description, since }),
   timeline: (id: string, path: string, match: TimelineMatch) =>
     post<TimelineResult>(`/repos/${id}/timeline`, { path, match }),
 };

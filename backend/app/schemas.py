@@ -1,6 +1,6 @@
 # app/schemas.py
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
@@ -215,6 +215,19 @@ class ConversationOut(BaseModel):
     questions:  int
     created_at: datetime
     updated_at: datetime
+
+
+class SuspectsIn(BaseModel):
+    description: str = Field(min_length=10, max_length=5000)
+    since:       date | None = None   # only commits on or after this day are suspects
+
+
+class SuspectsOut(BaseModel):
+    suspects:        list[dict]
+    mentioned_files: list[str]
+    answer:          str | None     # None when no model is connected
+    provider:        str | None
+    model:           str | None
 
 
 class TimelineIn(BaseModel):

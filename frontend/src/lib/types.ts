@@ -228,6 +228,27 @@ export interface OriginsResult {
   fixes: BugFix[];
 }
 
+export interface Suspect {
+  sha: string;
+  author: string;
+  timestamp: string;
+  message: string;
+  type: CommitType;
+  files: string[];
+  pr_number: number | null;
+  score: number;
+  scores: { search: number; files: number; risk: number };
+  reasons: string[];
+}
+
+export interface SuspectsResult {
+  suspects: Suspect[];
+  mentioned_files: string[];
+  answer: string | null;
+  provider: ProviderId | null;
+  model: string | null;
+}
+
 export interface TimelineResult {
   path: string;
   answer: string | null;

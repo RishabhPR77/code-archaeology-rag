@@ -3,7 +3,7 @@
 import re
 from collections.abc import Callable
 
-from retrieval import analytics
+from retrieval import analytics, suspects as suspect_ranking
 from storage.vector_store import VectorStore
 
 SYSTEM_PROMPT = """You are Code Archaeologist — an expert at explaining why code changes were made.
@@ -18,6 +18,13 @@ Use the conversation to replace pronouns and vague references (it, that change, 
 commits, files, features or people they refer to. Keep the user's intent and keep it short.
 If the question already stands on its own, return it unchanged.
 Reply with only the rewritten question."""
+
+SUSPECTS_PROMPT = """You help a developer find which commit most likely introduced a bug.
+Use ONLY the commits provided. For each suspect, explain in two or three sentences how its change could cause
+the reported problem, or say plainly that it probably didn't. Then name the most likely suspect and why.
+These are suspects, not proof: finish with one concrete way to confirm, such as running git bisect between two
+named commits or testing the commit just before the suspect.
+Cite commits by short SHA in backticks. Format the answer in Markdown."""
 
 # How much of the chat a follow-up sees: enough to resolve “it”, small enough to stay cheap
 HISTORY_TURNS = 3
@@ -140,3 +147,24 @@ def timeline(filename: str, chunks: list[dict], generate: Generate, match: str =
               "(bug clusters, refactors, feature growth). Cite commits by short SHA.\n\n"
               "TIMELINE:\n" + "\n".join(lines))
     return {"answer": generate(SYSTEM_PROMPT, prompt), "entries": entries}
+
+
+def find_suspects(description: str, namespace: str, chunks: list[dict], origins: list[dict] | None,
+                  since: str | None, generate: Generate | None) -> dict:
+    """Rank likely culprit commits for a bug report; the model explains them when one is connected."""
+    hits = VectorStore(namespace).search(description, top_k=30)
+    scores = {h["metadata"]["sha"]: h["score"] for h in hits}
+    found, mentioned = suspect_ranking.rank_suspects(description, chunks, scores,
+                                                     suspect_ranking.origin_counts(origins), since)
+    answer = None
+    if found and generate:
+        texts = {c["metadata"]["sha"]: c["text"] for c in chunks}
+        blocks = [f"--- Suspect {i} · commit {s['sha']} (score {s['score']}) ---\n"
+                  f"Flagged because: {'; '.join(s['reasons'])}\n\n{texts.get(s['sha'], '')[:2500]}"
+                  for i, s in enumerate(found, 1)]
+        prompt = (f"BUG REPORT:\n{description}\n\n"
+                  + (f"Only commits on or after {since} were considered.\n\n" if since else "")
+                  + "SUSPECT COMMITS:\n" + "\n\n".join(blocks))
+        answer = generate(SUSPECTS_PROMPT, prompt)
+    return {"suspects": found, "mentioned_files": mentioned, "answer": answer}
+
