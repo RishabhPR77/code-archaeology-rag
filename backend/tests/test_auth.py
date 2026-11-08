@@ -34,7 +34,10 @@ def test_login_logout(client):
 
 def test_tampered_session_rejected(client):
     register(client)
-    client.cookies.set(SESSION_COOKIE, client.cookies.get(SESSION_COOKIE) + "x")
+    # Replace the cookie under the domain the server set it for; a bare set() adds a second
+    # cookie that newer Starlette test clients don't send, so the valid one would go instead
+    session = next(c for c in client.cookies.jar if c.name == SESSION_COOKIE)
+    client.cookies.set(SESSION_COOKIE, session.value + "x", domain=session.domain, path=session.path)
     assert client.get("/api/auth/me").status_code == 401
 
 

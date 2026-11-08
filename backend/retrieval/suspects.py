@@ -58,7 +58,9 @@ def origin_counts(origins: list[dict] | None) -> Counter:
 
 
 def rank_suspects(description: str, chunks: list[dict], search_scores: dict[str, float],
-                  caused: Counter | dict, since: str | None = None, top_n: int = 3) -> tuple[list[dict], list[str]]:
+                  caused: Counter | dict, since: str | None = None, top_n: int = 3,
+                  weights: dict | None = None) -> tuple[list[dict], list[str]]:
+    w = weights or WEIGHTS   # evals/run_eval.py compares other weightings
     mentions = mentioned_files(description)
     best = max(search_scores.values(), default=0) or 1
     ranked = []
@@ -72,7 +74,7 @@ def rank_suspects(description: str, chunks: list[dict], search_scores: dict[str,
             continue  # unrelated to the report
         bugs = caused.get(row["sha"], 0)
         s_risk = 0.6 * TYPE_RISK.get(row["type"], 0.5) + 0.4 * (1.0 if bugs else 0.0)
-        score = WEIGHTS["search"] * s_search + WEIGHTS["files"] * s_files + WEIGHTS["risk"] * s_risk
+        score = w["search"] * s_search + w["files"] * s_files + w["risk"] * s_risk
 
         reasons = []
         if s_search >= 0.8:

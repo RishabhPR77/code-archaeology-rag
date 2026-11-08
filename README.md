@@ -27,6 +27,7 @@ The landing page plays an animated walkthrough of the whole flow: connect a mode
 - [Security](#security)
 - [API](#api)
 - [Testing](#testing)
+- [Accuracy](#accuracy)
 - [Project structure](#project-structure)
 - [Limitations and roadmap](#limitations-and-roadmap)
 
@@ -112,7 +113,7 @@ flowchart LR
 **Answering:**
 
 1. **Follow-ups.** In a chat with earlier messages, the model first rewrites the question into a standalone one (“who reviewed it?” becomes “who reviewed the OAuth login change in a1b2c3d?”). That is what gets searched, and the answer prompt includes the last three exchanges as context. The UI shows what was searched.
-2. **Hybrid retrieval.** Dense vector search pulls candidates, which are re-ranked with BM25 keyword scores (60% dense, 40% BM25). Exact identifiers such as function names and file paths are found as reliably as concepts.
+2. **Hybrid retrieval.** Dense vector search pulls candidates, which are re-ranked with BM25 keyword scores (60% dense, 40% BM25). Exact identifiers such as function names and file paths are found as reliably as concepts. On plain-English questions, the [accuracy check](#accuracy) found dense search alone does better.
 3. **Grounded prompt.** The model must answer only from the retrieved commits, cite SHAs and say when the evidence is insufficient.
 4. **Generation.** The user's active provider and model generate the answer. It is rendered as Markdown with no raw HTML allowed and stored in the repository's history.
 
@@ -342,14 +343,16 @@ cd backend
 python -m pytest
 ```
 
-There are 72 tests:
+There are 113 tests. GitHub Actions runs them, plus the frontend type-check and build, on every push to `main` and every pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests replace the embedding model with a small stand-in, so CI installs only `requirements.txt`, without torch.
 
 - **Auth:** sessions, cookie flags, rate limiting and admin handling.
 - **Accounts:** email codes (hashing, expiry, attempt and resend limits), GitHub App sign-in, linking and token refresh, Google sign-in, pre-hijack protection, private-repo cloning, the Brevo request format and the startup check of the Brevo sender. All HTTP is mocked.
 - **Migrations:** a database created before migrations existed is stamped and upgraded in place, and questions asked before chats existed are grouped into one chat per repository.
 - **Keys:** encryption, never echoing a key back, and per-user isolation.
-- **Ingestion and analytics:** the full ingest-to-answer flow, chats (grouping, privacy, deletion), limits, expiry cleanup and deletion of vectors.
+- **Ingestion and analytics:** the full ingest-to-answer flow, chats (grouping, privacy, deletion), follow-up questions (rewritten with only the last three exchanges), limits, expiry cleanup and deletion of vectors.
 - **Bug origins:** a real git repository built in the test traces a fix to the commit that introduced the bug, skips docs, tests and add-only fixes, and reports lines older than a shallow clone.
+- **Who broke it?:** file names and stack-trace paths are read from a report, paths match on their last folders, the three signals combine as documented, unrelated commits are left out, the `since` date filters, and commits behind earlier bugs rank higher.
+- **Accuracy check:** the helpers that turn a repository's history into questions remove the answer's own PR text from the index and only use bug fixes from before each report.
 - **Provider adapters:** all five adapters run their **real SDKs against mocked HTTP**, with response bodies shaped like each provider's official API reference. This pins down exactly what is sent (for example, no `temperature` for Anthropic and OpenAI) and how responses and errors are parsed.
 
 For the frontend, run a type-check and production build:
@@ -357,6 +360,37 @@ For the frontend, run a type-check and production build:
 ```bash
 cd frontend
 npm run build
+```
+
+## Accuracy
+
+How often does search find the right commit, and does Who broke it? point at the right culprit? [`backend/evals/run_eval.py`](backend/evals/run_eval.py) measures both on real repositories, using questions and answers taken from their own history, so nothing is labelled by hand:
+
+- **Search:** each merged pull request becomes a question (its title, or the first real sentence of its description), and the answer is the commit it belongs to. That PR text is removed from the index first, and the title is also cut from the commit message, so the answer can't simply match itself.
+- **Who broke it?:** each bug fix that Bug origins traced becomes a report (the fix's commit message), and the traced commit is the answer. Only commits and fixes from before the fix count.
+
+Latest run: the last 200 commits of `pallets/click`, `pallets/flask` and `encode/httpx`, with local BGE-small embeddings. Full tables are in [`backend/evals/RESULTS.md`](backend/evals/RESULTS.md).
+
+| Check | Cases | Right answer first | In the top 3 | In the top 8 |
+|---|---:|---:|---:|---:|
+| Search, PR description questions (app settings) | 118 | 34% | 43% | 53% |
+| Search, PR description questions, dense only | 118 | 44% | 56% | 71% |
+| Search, PR title questions (app settings) | 146 | 44% | 60% | 72% |
+| Search, PR title questions, dense only | 146 | 53% | 66% | 81% |
+| Who broke it? (app weights) | 13 | 31% | 31% | |
+| Who broke it?, newest commit first (baseline) | 13 | 15% | 15% | |
+
+What it shows:
+
+- **The BM25 keyword re-rank lowers accuracy.** With the app's 60/40 mix, the right commit is in the top 8 for 53% of description questions; dense search alone gets 71%. Dense alone beat every mix that includes keywords, on every measure and for both question types. The live site uses a different embedding model (Pinecone's llama-text-embed-v2), so this should be confirmed there before the mix changes.
+- **Who broke it? finds the traced cause first twice as often as guessing the newest commit**, but 13 cases are too few to tune its weights. A one-line fix message is also much less to go on than a real bug report.
+- httpx got no pull requests in this run because GitHub's limit for requests without a token ran out, so it only counts toward Who broke it?.
+
+Run it yourself (needs `requirements-local.txt` for the embedding model; about 20 minutes, and it never touches Pinecone, the database or `GITHUB_TOKEN`):
+
+```bash
+cd backend
+python -m evals.run_eval
 ```
 
 ## Project structure
@@ -375,7 +409,8 @@ code-archaeology-rag/
 │   │   └── services/            # ingest jobs, RAG prompts, OAuth, GitHub, email codes, usage limits
 │   ├── ingestion/               # git_loader, github_enricher, chunker, bug_origins
 │   ├── storage/vector_store.py  # local or hosted embeddings, Pinecone or local store, hybrid search
-│   ├── retrieval/analytics.py   # hot files, co-change, authors, PRs, timelines
+│   ├── retrieval/               # analytics (hot files, co-change, authors, PRs, timelines), suspects
+│   ├── evals/                   # accuracy check for search and Who broke it? (RESULTS.md)
 │   ├── migrations/              # Alembic schema migrations (run on every start)
 │   └── tests/
 ├── frontend/
@@ -385,6 +420,7 @@ code-archaeology-rag/
 │       ├── components/          # UI kit, product walkthrough, model picker, markdown, dialogs
 │       ├── layouts/AppLayout.tsx
 │       └── lib/                 # API client, types, queries, theme
+├── .github/workflows/ci.yml     # tests and frontend build on every push and pull request
 ├── docs/screenshots/            # images used in this README
 ├── Dockerfile                   # single production image (built by Render)
 └── render.yaml                  # Render Blueprint

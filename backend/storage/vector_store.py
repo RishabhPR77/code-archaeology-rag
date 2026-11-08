@@ -234,11 +234,11 @@ class VectorStore:
 
     # Hybrid search (dense + BM25 rerank)
     def search(self, question: str, top_k: int = 5,
-               filters: dict = None) -> list[dict]:
+               filters: dict = None, alpha: float = 0.6) -> list[dict]:
         """
         1. Dense retrieval (fetch top_k * 4 candidates)
         2. BM25 keyword re-rank on those candidates
-        3. Combine: final_score = 0.6 * dense + 0.4 * bm25_normalised
+        3. Combine: final_score = alpha * dense + (1 - alpha) * bm25_normalised (alpha 0.6 by default)
         4. Return top_k
         """
         candidate_k = min(max(top_k * 4, 20), 200)
@@ -256,8 +256,8 @@ class VectorStore:
         bm25_norm = [s / bm25_max for s in bm25_raw]
 
         # Combine scores
-        ALPHA = 0.6   # weight for dense; 0.4 for BM25
-        combined = [(ALPHA * dense + (1 - ALPHA) * bm25_norm[i], meta)
+        # alpha weights dense; 1 - alpha goes to BM25 (evals/run_eval.py compares other values)
+        combined = [(alpha * dense + (1 - alpha) * bm25_norm[i], meta)
                     for i, (dense, meta) in enumerate(candidates)]
         combined.sort(key=lambda x: x[0], reverse=True)
 
