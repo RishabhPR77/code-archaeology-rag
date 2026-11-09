@@ -10,6 +10,13 @@ cached). Questions and answers come from each repository's own history; see eval
     python -m evals.run_eval --repos pallets/click --commits 100
 
 Needs the local embedding model (pip install -r requirements-local.txt). Writes evals/RESULTS.md.
+
+    python -m evals.run_eval --hosted              # the live site's embedding model, search only
+
+--hosted uses Pinecone's llama-text-embed-v2 with PINECONE_API_KEY from backend/.env, in a separate
+index (EVAL_INDEX) that's deleted at the end, so the production index is never touched. It checks
+search only: embedding a second copy of every commit for Who broke it? would double the cost, and the
+free plan allows 5M embedding tokens a month (one run uses roughly 0.6M). Writes evals/RESULTS-hosted.md.
 """
 import os
 import sys
@@ -18,13 +25,20 @@ import tempfile
 from cryptography.fernet import Fernet
 
 _SCRATCH = tempfile.mkdtemp(prefix="ca-eval-")
+HOSTED = "--hosted" in sys.argv
+EVAL_INDEX = "ca-eval-throwaway"   # --hosted only; created for the run and deleted at the end
 # Environment values win over backend/.env, so set these before anything reads the settings:
-# nothing here can reach Pinecone, the real database, email or the server's GitHub token.
-os.environ.update({
+# nothing here can reach the real database, email or the server's GitHub token, and only --hosted
+# reaches Pinecone, in its own index.
+_env = {
     "PINECONE_API_KEY": "", "EMBEDDING_PROVIDER": "local", "GITHUB_TOKEN": "", "EMAIL_DELIVERY": "off",
     "DATABASE_URL": f"sqlite:///{_SCRATCH}/unused.db", "DATA_DIR": _SCRATCH,
     "SECRET_KEY": "eval-only-" + "x" * 32, "ENCRYPTION_KEY": Fernet.generate_key().decode(),
-})
+}
+if HOSTED:
+    del _env["PINECONE_API_KEY"]   # keep the key from backend/.env
+    _env.update({"EMBEDDING_PROVIDER": "pinecone", "PINECONE_INDEX": EVAL_INDEX})
+os.environ.update(_env)
 
 import argparse          # noqa: E402
 import dataclasses       # noqa: E402
@@ -62,6 +76,36 @@ WEIGHT_SETS = {
 OLD_SUSPECTS = "App weights, with the search from before"
 SEARCH_K = (1, 3, 8)       # the Ask tab reads the top 8 results
 SUSPECT_K = (1, 3, 10)     # Who broke it? shows the top 3
+
+
+class _QueryCache:
+    """Each question is searched several ways; ask the index once for the largest pool and reuse its prefix."""
+
+    def __init__(self, backend):
+        self.backend, self.results = backend, {}
+
+    def query(self, vector, top_k, namespace, flt):
+        key = (tuple(vector), namespace, repr(flt))
+        if key not in self.results or self.results[key][0] < top_k:
+            want = max(top_k, vector_store.SEARCH_POOL)
+            self.results[key] = (want, self.backend.query(vector, want, namespace, flt))
+        return self.results[key][1][:top_k]
+
+    def __getattr__(self, name):
+        return getattr(self.backend, name)
+
+
+def _wait_until_searchable(store: VectorStore, count: int, timeout: float = 180):
+    """Pinecone makes new vectors searchable after a short delay; searching sooner would miss commits."""
+    if not HOSTED:
+        return
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        ns = store.backend.index.describe_index_stats().namespaces.get(store.namespace)
+        if ns and ns.vector_count >= count:
+            return
+        time.sleep(3)
+    sys.exit(f"Pinecone still hadn't indexed all {count} commits after {timeout:.0f}s")
 
 
 def _rmtree(path: Path):
@@ -120,6 +164,7 @@ def _eval_search(name: str, chunks: list[dict]) -> dict:
     indexed, titles, descriptions = retrieval_cases(chunks)
     store = VectorStore(f"eval_search_{name}")
     store.ingest(indexed, overwrite=True)
+    _wait_until_searchable(store, len(indexed))
     out = {}
     for kind, cases in (("PR title", titles), ("PR description", descriptions)):
         out[kind] = {"cases": len(cases), "ranks": {}}
@@ -177,17 +222,20 @@ def _header(first: str, ks: tuple, word: str) -> list[str]:
 def _report(repos: list[dict], commits: int, seconds: float) -> str:
     search_ranks = lambda kind, label: [r for repo in repos for r in repo["search"][kind]["ranks"][label]]
     suspect_ranks = lambda label: [r for repo in repos for r in repo["suspects"]["ranks"][label]]
+    model = ("Pinecone's hosted llama-text-embed-v2, the live site's model, in a throwaway index; search only"
+             if HOSTED else "local BGE-small embeddings")
     lines = [
-        "# Accuracy check",
+        "# Accuracy check" + (" with the live site's embedding model" if HOSTED else ""),
         "",
-        f"Run on {date.today().isoformat()} with `python -m evals.run_eval` (local BGE-small embeddings, "
-        f"the last {commits} commits of each repository, {seconds / 60:.0f} minutes). "
-        "The live site uses Pinecone's llama-text-embed-v2, so its numbers can differ.",
+        f"Run on {date.today().isoformat()} with `python -m evals.run_eval{' --hosted' if HOSTED else ''}` ({model}, "
+        f"the last {commits} commits of each repository, {seconds / 60:.0f} minutes)."
+        + ("" if HOSTED else " The live site uses Pinecone's llama-text-embed-v2, so its numbers can differ."),
         "",
         "| Repository | Commits | Linked PRs | Title questions | Description questions | Traced bugs |",
         "|---|---:|---:|---:|---:|---:|",
         *[f"| [{r['name']}](https://github.com/{r['name']}) at `{r['head']}` | {r['commits']} | {r['prs']} | "
-          f"{r['search']['PR title']['cases']} | {r['search']['PR description']['cases']} | {r['suspects']['cases']} |"
+          f"{r['search']['PR title']['cases']} | {r['search']['PR description']['cases']} | "
+          f"{r['suspects']['cases'] if r['suspects'] else 'not run'} |"
           for r in repos],
         "",
         *([f"No pull requests were fetched for {', '.join(r['name'] for r in repos if not r['prs'])} (GitHub's "
@@ -219,6 +267,8 @@ def _report(repos: list[dict], commits: int, seconds: float) -> str:
                      r["search"][kind]["ranks"][label], SEARCH_K)
                 for r in repos if r["prs"] for kind in ("PR description", "PR title") for label in (OLD_SEARCH, APP_SEARCH)],
               ""]
+    if HOSTED:
+        return "\n".join(lines)
     lines += [
         "## Who broke it?",
         "",
@@ -248,15 +298,24 @@ def main():
     parser.add_argument("--commits", type=int, default=200)
     parser.add_argument("--cache", type=Path, default=BACKEND / "data" / "eval-cache",
                         help="clones and pull requests are kept here between runs")
-    parser.add_argument("--out", type=Path, default=Path(__file__).with_name("RESULTS.md"))
+    parser.add_argument("--hosted", action="store_true",
+                        help="use the live site's embedding model in a throwaway Pinecone index (search only)")
+    parser.add_argument("--out", type=Path,
+                        default=Path(__file__).with_name("RESULTS-hosted.md" if HOSTED else "RESULTS.md"))
     args = parser.parse_args()
 
     settings = get_settings()
-    if settings.pinecone_api_key or settings.embedding_provider != "local":
+    if HOSTED:
+        if not settings.pinecone_api_key:
+            sys.exit("--hosted needs PINECONE_API_KEY in backend/.env.")
+        if settings.pinecone_index != EVAL_INDEX or settings.embedding_provider != "pinecone":
+            sys.exit("Refusing to run: --hosted must use its own throwaway index.")
+    elif settings.pinecone_api_key or settings.embedding_provider != "local":
         sys.exit("Refusing to run: the settings still point at Pinecone.")
     args.cache.mkdir(parents=True, exist_ok=True)
-    # Each question is searched once per method; embed it once
+    # Each question is searched once per method; embed it once and query the index once
     vector_store._embed_query = functools.lru_cache(maxsize=None)(vector_store._embed_query)
+    vector_store._backend = _QueryCache(vector_store._get_backend())
 
     started, results = time.time(), []
     try:
@@ -266,16 +325,24 @@ def main():
             path = _clone(full_name, args.commits, args.cache)
             commits = load_commits(str(path), max_count=args.commits)
             chunks = build_chunks(commits, pull_requests=_prs(full_name, commits, args.cache))
-            fixes = find_bug_origins(str(path), commits)
             print("  searching")
             search = _eval_search(name, chunks)
-            print("  ranking suspects")
-            suspects = _eval_suspects(name, chunks, fixes)
+            suspects = None
+            if not HOSTED:
+                print("  ranking suspects")
+                suspects = _eval_suspects(name, chunks, find_bug_origins(str(path), commits))
             results.append({"name": full_name, "head": commits[0].sha[:7], "commits": len(chunks),
                             "prs": len({c["metadata"]["pr_number"] for c in chunks if c["metadata"]["pr_number"]}),
                             "search": search, "suspects": suspects})
     finally:
         _rmtree(Path(_SCRATCH))
+        if HOSTED:
+            from pinecone.exceptions import NotFoundException
+            try:
+                vector_store._pinecone().delete_index(EVAL_INDEX)
+                print(f"Deleted the throwaway index {EVAL_INDEX}")
+            except NotFoundException:
+                pass
 
     report = _report(results, args.commits, time.time() - started)
     args.out.write_text(report, encoding="utf-8")

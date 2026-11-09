@@ -425,6 +425,12 @@ cd backend
 python -m evals.run_eval
 ```
 
+To check search with the live site's embedding model instead, add `--hosted`. It uses `PINECONE_API_KEY` from `backend/.env`, works in a separate throwaway index that is deleted at the end (the production index is never touched), and checks search only, writing `evals/RESULTS-hosted.md`. One run embeds about 600 commits, roughly 0.6M of the 5M embedding tokens Pinecone's free plan allows each month. Each search downloads the text of 200 commits, so on a slow connection it can take up to an hour.
+
+```bash
+python -m evals.run_eval --hosted
+```
+
 ## Project structure
 
 ```
