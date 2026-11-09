@@ -420,3 +420,60 @@ def test_stream_setup_problems_are_normal_errors(user_client):
     _connect_model(user_client)
     r = user_client.post(f"/api/repos/{rid}/ask/stream", json={"question": "why?!", "conversation_id": 999})
     assert r.status_code == 404
+
+
+def test_a_stopped_answer_is_kept_in_the_chat(user_client):
+    rid = _ready_repo(user_client)["id"]
+    _connect_model(user_client)
+    source = {"sha": "abc1234", "author": "alice", "timestamp": "2026-01-01T00:00:00", "files": ["app.py"],
+              "score": 0.9, "has_pr": False, "pr_number": None, "message": "add oauth"}
+
+    # Stopping the first question of a new chat creates the chat
+    r = user_client.post(f"/api/repos/{rid}/ask/stopped", json={
+        "question": "why was oauth login added?", "answer": "The OAuth login was added ", "sources": [source]})
+    assert r.status_code == 200, r.text
+    first = r.json()
+    assert first["stopped"] is True and first["answer"] == "The OAuth login was added"
+    assert first["sources"] == [source] and first["search_query"] is None
+    chats = user_client.get(f"/api/repos/{rid}/chats").json()
+    assert [(c["id"], c["questions"]) for c in chats] == [(first["conversation_id"], 1)]
+
+    # A stopped follow-up joins its chat, keeps what was searched for, and later follow-ups can see it
+    follow = user_client.post(f"/api/repos/{rid}/ask/stopped", json={
+        "question": "who reviewed it?", "answer": "Bob reviewed", "search_query": "Standalone: who reviewed it?",
+        "conversation_id": first["conversation_id"]}).json()
+    assert follow["conversation_id"] == first["conversation_id"] and follow["search_query"] == "Standalone: who reviewed it?"
+    saved = user_client.get(f"/api/repos/{rid}/chats/{first['conversation_id']}").json()
+    assert [m["stopped"] for m in saved] == [True, True]
+
+    # Normal answers are not marked stopped
+    normal = user_client.post(f"/api/repos/{rid}/ask", json={"question": "what changed in the tests?"}).json()
+    assert normal["stopped"] is False
+
+
+def test_stop_after_the_answer_finished_keeps_the_complete_answer(user_client):
+    rid = _ready_repo(user_client)["id"]
+    _connect_model(user_client)
+    done = user_client.post(f"/api/repos/{rid}/ask", json={"question": "why was oauth login added?"}).json()
+    r = user_client.post(f"/api/repos/{rid}/ask/stopped", json={
+        "question": "why was oauth login added?", "answer": "Answer from", "conversation_id": done["conversation_id"]})
+    assert r.json()["id"] == done["id"] and r.json()["stopped"] is False
+    assert len(user_client.get(f"/api/repos/{rid}/chats/{done['conversation_id']}").json()) == 1
+
+
+def test_stopped_answers_are_validated_and_private(client):
+    from tests.conftest import register
+    register(client, "alice@example.com")
+    rid = _ready_repo(client)["id"]
+    _connect_model(client)
+    chat = client.post(f"/api/repos/{rid}/ask", json={"question": "why was oauth login added?"}).json()["conversation_id"]
+    assert client.post(f"/api/repos/{rid}/ask/stopped", json={"question": "why?!", "answer": ""}).status_code == 422
+
+    client.post("/api/auth/logout")
+    register(client, "mallory@example.com")
+    mine = _ready_repo(client)["id"]
+    _connect_model(client)
+    # Someone else's repository, or their chat inside your own repository, is not found
+    assert client.post(f"/api/repos/{rid}/ask/stopped", json={"question": "why?!", "answer": "x"}).status_code == 404
+    assert client.post(f"/api/repos/{mine}/ask/stopped",
+                       json={"question": "why?!", "answer": "x", "conversation_id": chat}).status_code == 404

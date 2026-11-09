@@ -48,7 +48,7 @@ Code Archaeologist makes that history answerable:
 
 | | |
 |---|---|
-| **Ask** | Chat-style Q&A over the history, with Detailed, Summary and Bullets modes. Every answer lists its source commits (SHA, author, date, files, relevance) and links each cited SHA to GitHub. Questions are kept in chats: start a **New chat** any time, and switch between or delete past chats. Follow-ups such as “who reviewed it?” understand the chat's last three exchanges. Answers **stream in** as the model writes them, and **Stop** ends one early. |
+| **Ask** | Chat-style Q&A over the history, with Detailed, Summary and Bullets modes. Every answer lists its source commits (SHA, author, date, files, relevance) and links each cited SHA to GitHub. Questions are kept in chats: start a **New chat** any time, and switch between or delete past chats. Follow-ups such as “who reviewed it?” understand the chat's last three exchanges. Answers **stream in** as the model writes them, and **Stop** ends one early while keeping what was written, marked as stopped. |
 | **File timeline** | Pick any file or folder from a searchable list and trace every commit that touched it, with an LLM summary of the phases of change, a monthly activity chart and the full chronology. |
 | **Bug origins** | Every bug-fix commit traced back to the commits that most likely introduced the bug, using `git blame` on the lines the fix changed (the SZZ method). Shows how long each bug lived and which commits sit behind several fixes. No LLM needed. |
 | **Who broke it?** | Describe a bug or paste an error, and get the three most likely culprit commits. They're ranked by how well they match the report (hybrid search), whether they changed files it names (stack-trace paths included), and a risk signal from the type of change and Bug origins. Your model explains each suspect and suggests how to confirm it. Suspects, not proof. |
@@ -115,7 +115,7 @@ flowchart LR
 1. **Follow-ups.** In a chat with earlier messages, the model first rewrites the question into a standalone one (“who reviewed it?” becomes “who reviewed the OAuth login change in a1b2c3d?”). That is what gets searched, and the answer prompt includes the last three exchanges as context. The UI shows what was searched.
 2. **Hybrid retrieval.** Up to 200 commits are fetched by meaning (dense vectors). Pinecone returns only their IDs and scores; the text comes from the copy of each commit already saved in Postgres, which saves downloading about half a megabyte per question. The same commits are also scored by keywords (BM25, with code split into words, so `ctx.ensure_object()` matches "ensure object"). The two rankings are merged by position with reciprocal rank fusion, so neither side's score scale can drown out the other, and a keyword match counts three times a meaning match. Exact identifiers such as function names and file paths are found as reliably as concepts; the [accuracy check](#accuracy) measures how well it works.
 3. **Grounded prompt.** The model must answer only from the retrieved commits, cite SHAs and say when the evidence is insufficient.
-4. **Generation.** The user's active provider and model write the answer, which streams to the browser as server-sent events: first the commits that were found, then the answer piece by piece. All five providers stream through their official SDKs. It is rendered as Markdown with no raw HTML allowed, and only a complete answer is saved to the chat: one that fails halfway or is stopped is not.
+4. **Generation.** The user's active provider and model write the answer, which streams to the browser as server-sent events: first the commits that were found, then the answer piece by piece. All five providers stream through their official SDKs. It is rendered as Markdown with no raw HTML allowed, and a complete answer is saved to the chat. If you press Stop, the text written so far is saved too, marked as stopped; an answer that fails halfway is not saved.
 
 The analytics pages (overview, hot files, co-change, authors, PRs, commits) are computed directly from the stored chunks, with no LLM or vector calls.
 
@@ -333,6 +333,7 @@ The interactive OpenAPI docs are available at `/api/docs` in development.
 | `GET /api/repos/{id}/overview` · `hotfiles` · `cochange` · `authors` · `pulls` · `commits` · `files` · `origins` | Analytics, including bug origins |
 | `POST /api/repos/{id}/ask` | Ask a question; `conversation_id` continues a chat, leaving it out starts a new one |
 | `POST /api/repos/{id}/ask/stream` | The same, as server-sent events: `sources` (what was found), `delta` (each new piece of the answer), then `done` (the saved exchange) or `error`. Setup problems, such as no model connected, are normal JSON errors |
+| `POST /api/repos/{id}/ask/stopped` | Keep an answer the user stopped part-way: the page sends the text written so far and it's saved to the chat marked as stopped (if the answer had already finished, the complete one is kept instead) |
 | `GET /api/repos/{id}/chats` · `GET`/`DELETE /api/repos/{id}/chats/{chat_id}` | List chats, read one, delete one |
 | `POST /api/repos/{id}/timeline` | File evolution summary |
 | `POST /api/repos/{id}/suspects` | Rank likely culprit commits for a bug report (`description`, optional `since` date) |
@@ -344,13 +345,13 @@ cd backend
 python -m pytest
 ```
 
-There are 129 tests. GitHub Actions runs them, plus the frontend type-check and build, on every push to `main` and every pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests replace the embedding model with a small stand-in, so CI installs only `requirements.txt`, without torch.
+There are 132 tests. GitHub Actions runs them, plus the frontend type-check and build, on every push to `main` and every pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests replace the embedding model with a small stand-in, so CI installs only `requirements.txt`, without torch.
 
 - **Auth:** sessions, cookie flags, rate limiting and admin handling.
 - **Accounts:** email codes (hashing, expiry, attempt and resend limits), GitHub App sign-in, linking and token refresh, Google sign-in, pre-hijack protection, private-repo cloning, the Brevo request format and the startup check of the Brevo sender. All HTTP is mocked.
 - **Migrations:** a database created before migrations existed is stamped and upgraded in place, and questions asked before chats existed are grouped into one chat per repository.
 - **Keys:** encryption, never echoing a key back, and per-user isolation.
-- **Ingestion and analytics:** the full ingest-to-answer flow, chats (grouping, privacy, deletion), follow-up questions (rewritten with only the last three exchanges), streamed answers (event order, follow-ups, a provider failing halfway saves nothing), limits, expiry cleanup and deletion of vectors.
+- **Ingestion and analytics:** the full ingest-to-answer flow, chats (grouping, privacy, deletion), follow-up questions (rewritten with only the last three exchanges), streamed answers (event order, follow-ups, a provider failing halfway saves nothing, stopped answers are kept and never duplicated), limits, expiry cleanup and deletion of vectors.
 - **Bug origins:** a real git repository built in the test traces a fix to the commit that introduced the bug, skips docs, tests and add-only fixes, and reports lines older than a shallow clone.
 - **Who broke it?:** file names and stack-trace paths are read from a report, paths match on their last folders, the three signals combine as documented, unrelated commits are left out, the `since` date filters, and commits behind earlier bugs rank higher.
 - **Search:** code is split into words, common words are skipped, the two rankings merge by position, and keywords find a commit the embedding ranked low.

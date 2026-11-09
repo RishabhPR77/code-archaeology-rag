@@ -177,6 +177,8 @@ export interface QueryResult {
   provider: ProviderId;
   model: string;
   sources: Source[];
+  // The user stopped it part-way; `answer` is what was written until then
+  stopped: boolean;
   created_at: string;
 }
 

@@ -9,7 +9,7 @@ import { Markdown } from "../../components/Markdown";
 import { Button, Card, ConfirmDialog, ErrorNotice, Segmented, Skeleton } from "../../components/ui";
 import { api, ApiError } from "../../lib/api";
 import { useSession } from "../../lib/auth";
-import type { AskMode, Chat, QueryResult, Repo } from "../../lib/types";
+import type { AskMode, Chat, QueryResult, Repo, Source } from "../../lib/types";
 import { cn, formatDate, relativeTime, shortSha } from "../../lib/utils";
 
 const SUGGESTIONS = [
@@ -21,8 +21,8 @@ const SUGGESTIONS = [
   "What new features were added and why?",
 ];
 
-// The answer being written: text so far, and what the search found
-interface Draft { text: string; searchQuery: string | null; found: boolean }
+// The answer being written: text so far, what the search found, and whether the user pressed Stop
+interface Draft { text: string; searchQuery: string | null; found: boolean; stopped: boolean }
 
 // The user pressed Stop
 const isAbort = (e: unknown) => e instanceof DOMException && e.name === "AbortError";
@@ -69,6 +69,14 @@ function Sources({ result, repoUrl }: { result: QueryResult; repoUrl: string }) 
   );
 }
 
+function StoppedNote() {
+  return (
+    <p className="mt-3 inline-flex items-center gap-1.5 text-xs text-subtle">
+      <Square className="size-2.5 fill-current" /> You stopped this answer
+    </p>
+  );
+}
+
 function Exchange({ q, repoUrl }: { q: QueryResult; repoUrl: string }) {
   return (
     <div className="space-y-3 animate-fade-up">
@@ -90,6 +98,7 @@ function Exchange({ q, repoUrl }: { q: QueryResult; repoUrl: string }) {
           <span className="ml-auto">{relativeTime(q.created_at)}</span>
         </div>
         <Markdown repoUrl={repoUrl}>{q.answer}</Markdown>
+        {q.stopped && <StoppedNote />}
         <Sources result={q} repoUrl={repoUrl} />
       </Card>
     </div>
@@ -174,12 +183,22 @@ export function Ask({ repo }: { repo: Repo }) {
       let timer: number | undefined;
       // Re-rendering the Markdown for every small piece is wasteful; show new text at most every 50 ms
       const show = () => { timer = undefined; setDraft((d) => d && { ...d, text }); };
-      setDraft({ text: "", searchQuery: null, found: false });
+      let found: { sources: Source[]; search_query: string | null } = { sources: [], search_query: null };
+      setDraft({ text: "", searchQuery: null, found: false, stopped: false });
       try {
         return await api.ask(repo.id, q, mode, onlyPr, chat, {
-          onSources: ({ search_query }) => setDraft((d) => d && { ...d, searchQuery: search_query, found: true }),
+          onSources: (f) => { found = f; setDraft((d) => d && { ...d, searchQuery: f.search_query, found: true }); },
           onText: (piece) => { text += piece; timer ??= window.setTimeout(show, 50); },
         }, controller.signal);
+      } catch (error) {
+        // Stopped part-way: keep what was written, saved to the chat and marked as stopped
+        if (isAbort(error) && text.trim()) {
+          return await api.saveStopped(repo.id, {
+            question: q, mode, only_pr: onlyPr, conversation_id: chat,
+            answer: text, search_query: found.search_query, sources: found.sources,
+          });
+        }
+        throw error;
       } finally {
         window.clearTimeout(timer);
         show();
@@ -195,9 +214,19 @@ export function Ask({ repo }: { repo: Repo }) {
       // A first question opens its new chat, unless the user has moved to another one meanwhile
       if (chat === null && chatId === null) select(id);
     },
-    // A stopped answer simply disappears; any other failure keeps the text so far next to the error
-    onError: (error) => { if (isAbort(error)) setDraft(null); },
+    // Stopped before any text: nothing to keep, and the question stays in the box.
+    // Any other failure keeps the text so far next to the error.
+    onError: (error) => {
+      if (isAbort(error)) {
+        setDraft(null);
+        toast("Stopped before the answer began");
+      }
+    },
   });
+  const stop = () => {
+    setDraft((d) => d && { ...d, stopped: true });
+    stopper.current?.abort();
+  };
   const remove = useMutation({
     mutationFn: (chat: Chat) => api.deleteChat(repo.id, chat.id),
     onSuccess: (_, chat) => {
@@ -308,13 +337,16 @@ export function Ask({ repo }: { repo: Repo }) {
                     <span className="font-mono">{user.active_model}</span>
                     <span>·</span>
                     <span className="capitalize">{ask.variables?.mode}</span>
-                    {pendingHere && (
+                    {pendingHere && (draft.stopped ? (
+                      <span className="ml-auto text-subtle">Stopped</span>
+                    ) : (
                       <span className="ml-auto inline-flex items-center gap-1.5 text-accent">
                         <span className="size-1.5 animate-pulse rounded-full bg-accent" /> Writing…
                       </span>
-                    )}
+                    ))}
                   </div>
                   <Markdown repoUrl={repo.url}>{draft.text}</Markdown>
+                  {pendingHere && draft.stopped && <StoppedNote />}
                   {!pendingHere && <p className="mt-3 text-xs text-subtle">This answer stopped early, so it wasn't saved.</p>}
                 </Card>
               ) : pendingHere && (
@@ -359,7 +391,7 @@ export function Ask({ repo }: { repo: Repo }) {
               </label>
               <div className="flex-1" />
               {ask.isPending ? (
-                <Button size="icon" variant="secondary" className="size-8" onClick={() => stopper.current?.abort()}
+                <Button size="icon" variant="secondary" className="size-8" onClick={stop}
                         aria-label="Stop the answer" title="Stop">
                   <Square className="size-3 fill-current" />
                 </Button>

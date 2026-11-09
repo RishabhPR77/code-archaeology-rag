@@ -166,6 +166,11 @@ export const api = {
   ask: (id: string, question: string, mode: AskMode, onlyPr: boolean, chatId: number | null,
         handlers: AskStreamHandlers = {}, signal?: AbortSignal) =>
     askStream(id, { question, mode, only_pr: onlyPr, conversation_id: chatId }, handlers, signal),
+  // Keep an answer the user stopped part-way; the reply is the saved exchange, marked as stopped
+  saveStopped: (id: string, stopped: {
+    question: string; mode: AskMode; only_pr: boolean; conversation_id: number | null;
+    answer: string; search_query: string | null; sources: Source[];
+  }) => post<QueryResult>(`/repos/${id}/ask/stopped`, stopped),
   suspects: (id: string, description: string, since: string | null) =>
     post<SuspectsResult>(`/repos/${id}/suspects`, { description, since }),
   timeline: (id: string, path: string, match: TimelineMatch) =>

@@ -2,6 +2,7 @@
 import json
 import logging
 import uuid
+from datetime import timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query as Q, status
 from fastapi.responses import StreamingResponse
@@ -15,7 +16,7 @@ from app.deps import owned_repo, verified_user
 from app.llm import ProviderError
 from app.models import Conversation, IngestEvent, Query, Repo, RepoData, User, utcnow
 from app.routers.providers import provider_http_error
-from app.schemas import (GITHUB_URL, AskIn, ConversationOut, QueryOut, SuspectsIn, SuspectsOut, RepoIn, RepoOut, TimelineIn, TimelineOut,
+from app.schemas import (GITHUB_URL, AskIn, ConversationOut, QueryOut, StoppedIn, SuspectsIn, SuspectsOut, RepoIn, RepoOut, TimelineIn, TimelineOut,
                          as_utc)
 from app.security import decrypt_secret
 from app.services import github, ingest, rag
@@ -195,7 +196,7 @@ def _query_out(q: Query) -> QueryOut:
     return QueryOut(id=q.id, kind=q.kind, conversation_id=q.conversation_id, question=q.question,
                     search_query=q.search_query, answer=q.answer, mode=q.mode,
                     provider=q.provider, model=q.model, sources=json.loads(q.sources_json),
-                    created_at=as_utc(q.created_at))
+                    stopped=q.stopped, created_at=as_utc(q.created_at))
 
 
 def _chat_title(question: str) -> str:
@@ -219,7 +220,7 @@ def _chat_history(db: Session, chat: Conversation | None) -> rag.History:
 
 
 def _save_exchange(db: Session, repo_id: str, chat_id: int | None, body: AskIn, provider: str, model: str,
-                   answer: str, sources: list[dict], search_query: str) -> QueryOut:
+                   answer: str, sources: list[dict], search_query: str, stopped: bool = False) -> QueryOut:
     # The chat is created only once there is an answer, so a failed first question leaves no empty chat
     chat = db.get(Conversation, chat_id) if chat_id is not None else None
     if chat is None:
@@ -229,7 +230,8 @@ def _save_exchange(db: Session, repo_id: str, chat_id: int | None, body: AskIn, 
     chat.updated_at = utcnow()
     q = Query(repo_id=repo_id, kind="ask", conversation_id=chat.id, question=body.question,
               search_query=search_query if search_query != body.question else None,
-              answer=answer, mode=body.mode, provider=provider, model=model, sources_json=json.dumps(sources))
+              answer=answer, mode=body.mode, provider=provider, model=model, sources_json=json.dumps(sources),
+              stopped=stopped)
     db.add(q)
     db.commit()
     return _query_out(q)
@@ -301,6 +303,25 @@ def ask_stream(body: AskIn, repo: Repo = Depends(owned_repo),
     # no-cache and X-Accel-Buffering stop proxies from holding the stream back
     return StreamingResponse(events(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.post("/{repo_id}/ask/stopped", response_model=QueryOut)
+def ask_stopped(body: StoppedIn, repo: Repo = Depends(owned_repo),
+                user: User = Depends(verified_user), db: Session = Depends(get_db)):
+    """Keep an answer the user stopped part-way: the page sends the text written so far, and it's saved to
+    the chat marked as stopped, creating the chat if this was its first question."""
+    _ready_data(repo)
+    chat = _owned_chat(db, repo, body.conversation_id) if body.conversation_id is not None else None
+    provider, model, _ = _credential_for(db, user)
+    # The answer may have finished just as Stop was pressed; then keep the complete one rather than a copy
+    finished = select(Query).where(Query.repo_id == repo.id, Query.kind == "ask", Query.question == body.question,
+                                   Query.stopped.is_(False), Query.created_at >= utcnow() - timedelta(minutes=2))
+    if chat is not None:
+        finished = finished.where(Query.conversation_id == chat.id)
+    if (done := db.scalars(finished.order_by(Query.id.desc()).limit(1)).first()) is not None:
+        return _query_out(done)
+    return _save_exchange(db, repo.id, chat.id if chat else None, body, provider, model, body.answer.strip(),
+                          [s.model_dump() for s in body.sources], body.search_query or body.question, stopped=True)
 
 
 @router.get("/{repo_id}/chats", response_model=list[ConversationOut])

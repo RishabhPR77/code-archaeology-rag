@@ -31,7 +31,7 @@ def test_pre_migration_database_is_upgraded_in_place():
     init_db()
     init_db()  # every later start is a no-op
     with engine.connect() as c:
-        assert c.execute(text("select version_num from alembic_version")).scalar() == "0005"
+        assert c.execute(text("select version_num from alembic_version")).scalar() == "0006"
         assert c.execute(text("select email_verified from users")).scalar() == 1   # existing users stay in
     assert "email_verifications" in inspect(engine).get_table_names()
     assert "is_private" in {col["name"] for col in inspect(engine).get_columns("repos")}

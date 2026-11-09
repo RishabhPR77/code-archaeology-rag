@@ -206,7 +206,15 @@ class QueryOut(BaseModel):
     provider:   str
     model:      str
     sources:    list[SourceOut]
+    stopped:    bool = False   # the user stopped it part-way; `answer` is what was written until then
     created_at: datetime
+
+
+class StoppedIn(AskIn):
+    """An answer the user stopped part-way, sent back by the page so the chat keeps what was written."""
+    answer:       str = Field(min_length=1, max_length=100_000)
+    search_query: str | None = Field(default=None, max_length=2000)
+    sources:      list[SourceOut] = Field(default_factory=list, max_length=100)
 
 
 class ConversationOut(BaseModel):

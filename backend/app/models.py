@@ -121,6 +121,7 @@ class Query(Base):
     provider:     Mapped[str] = mapped_column(String(32))
     model:        Mapped[str] = mapped_column(String(200))
     sources_json: Mapped[str] = mapped_column(Text, default="[]")
+    stopped:      Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())   # stopped part-way
     created_at:   Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
