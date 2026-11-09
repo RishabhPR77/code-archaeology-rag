@@ -47,3 +47,48 @@ def test_keywords_find_a_commit_the_embedding_missed():
     assert hits[0]["metadata"]["sha"] == "ccccccc"
     assert 0 < hits[-1]["score"] < hits[0]["score"] <= 1
     store.delete_namespace()
+
+
+def _repo_chunks():
+    return [
+        _chunk("aaaaaaa", "COMMIT: tidy the readme wording"),
+        _chunk("bbbbbbb", "COMMIT: bump the version number\n\nPR #4 by bob: release prep"),
+        _chunk("ccccccc", "COMMIT: set up the context early\n\nDIFF:\n+ ctx.ensure_object(dict)"),
+    ]
+
+
+def test_search_with_saved_commits_matches_and_skips_downloading_text(monkeypatch):
+    chunks = _repo_chunks()
+    chunks[1]["metadata"]["has_pr"], chunks[1]["metadata"]["pr_number"] = True, 4
+    store = VectorStore("test_search_saved")
+    store.ingest(chunks)
+    question = "where is ensure object called"
+    expected = store.search(question, top_k=3)
+    assert store.search(question, top_k=1, filters={"has_pr": True})[0]["metadata"]["sha"] == "bbbbbbb"
+
+    # With the saved commits, the index is only asked for IDs and scores
+    def no_text(*args, **kwargs):
+        raise AssertionError("search downloaded commit text from the index")
+    monkeypatch.setattr(type(store.backend), "query", no_text)
+    assert store.search(question, top_k=3, chunks=chunks) == expected
+    assert [h["metadata"]["sha"] for h in store.search(question, top_k=3, filters={"has_pr": True}, chunks=chunks)] \
+        == ["bbbbbbb"]
+    # A vector whose commit isn't in the saved data (for example, left from an older sync) is skipped
+    assert {h["metadata"]["sha"] for h in store.search(question, top_k=3, chunks=chunks[:2])} == {"aaaaaaa", "bbbbbbb"}
+    store.delete_namespace()
+
+
+def test_pinecone_is_asked_for_ids_only():
+    from types import SimpleNamespace
+    from storage.vector_store import _PineconeBackend
+
+    class FakeIndex:
+        def query(self, **kwargs):
+            self.kwargs = kwargs
+            return SimpleNamespace(matches=[SimpleNamespace(id="abc", score=0.9, metadata=None)])
+
+    backend = _PineconeBackend.__new__(_PineconeBackend)   # skip connecting to Pinecone
+    backend.index = FakeIndex()
+    assert backend.query_ids([0.1], 200, "ns", {"has_pr": True}) == [(0.9, "abc")]
+    assert backend.index.kwargs == {"vector": [0.1], "top_k": 200, "namespace": "ns", "include_metadata": False,
+                                    "filter": {"has_pr": {"$eq": True}}}

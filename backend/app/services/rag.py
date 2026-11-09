@@ -117,26 +117,30 @@ NO_COMMITS = "No relevant commits were found for this question."
 
 
 def prepare(question: str, namespace: str, generate: Generate, mode: str = "detailed",
-            only_pr: bool = False, top_k: int = 8, history: History | None = None) -> dict:
+            only_pr: bool = False, top_k: int = 8, history: History | None = None,
+            chunks: list[dict] | None = None) -> dict:
     """Everything before the model writes the answer: rewrite a follow-up, search, build the prompt.
-    `prompt` is None when nothing relevant was found, so there's nothing to ask the model."""
+    `prompt` is None when nothing relevant was found, so there's nothing to ask the model.
+    `chunks` (the repository's saved commits) lets search skip downloading commit text from the index."""
     history = (history or [])[-HISTORY_TURNS:]
     # Follow-ups are searched as standalone questions; the first question in a chat is used as-is
     query = standalone_question(question, history, generate)
     store = VectorStore(namespace)
     # For PR listing questions — pull many PR-linked commits, each trimmed
     if _is_pr_listing_question(query):
-        chunks, per_chunk = store.search(query, top_k=PR_LISTING_TOP_K, filters={"has_pr": True}), 500
+        hits, per_chunk = store.search(query, top_k=PR_LISTING_TOP_K, filters={"has_pr": True},
+                                       chunks=chunks), 500
     else:
-        chunks, per_chunk = store.search(query, top_k=top_k,
-                                         filters={"has_pr": True} if only_pr else None), 2500
-    return {"search_query": query, "sources": [_source(c) for c in chunks],
-            "prompt": build_prompt(question, chunks, mode, per_chunk, history, query) if chunks else None}
+        hits, per_chunk = store.search(query, top_k=top_k, filters={"has_pr": True} if only_pr else None,
+                                       chunks=chunks), 2500
+    return {"search_query": query, "sources": [_source(c) for c in hits],
+            "prompt": build_prompt(question, hits, mode, per_chunk, history, query) if hits else None}
 
 
 def ask(question: str, namespace: str, generate: Generate, mode: str = "detailed",
-        only_pr: bool = False, top_k: int = 8, history: History | None = None) -> dict:
-    p = prepare(question, namespace, generate, mode, only_pr, top_k, history)
+        only_pr: bool = False, top_k: int = 8, history: History | None = None,
+        chunks: list[dict] | None = None) -> dict:
+    p = prepare(question, namespace, generate, mode, only_pr, top_k, history, chunks)
     answer = generate(SYSTEM_PROMPT, p["prompt"]) if p["prompt"] else NO_COMMITS
     return {"answer": answer, "sources": p["sources"], "search_query": p["search_query"]}
 
@@ -160,7 +164,7 @@ def timeline(filename: str, chunks: list[dict], generate: Generate, match: str =
 def find_suspects(description: str, namespace: str, chunks: list[dict], origins: list[dict] | None,
                   since: str | None, generate: Generate | None) -> dict:
     """Rank likely culprit commits for a bug report; the model explains them when one is connected."""
-    hits = VectorStore(namespace).search(description, top_k=30)
+    hits = VectorStore(namespace).search(description, top_k=30, chunks=chunks)
     scores = {h["metadata"]["sha"]: h["score"] for h in hits}
     found, mentioned = suspect_ranking.rank_suspects(description, chunks, scores,
                                                      suspect_ranking.origin_counts(origins), since)

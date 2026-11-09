@@ -113,7 +113,7 @@ flowchart LR
 **Answering:**
 
 1. **Follow-ups.** In a chat with earlier messages, the model first rewrites the question into a standalone one (“who reviewed it?” becomes “who reviewed the OAuth login change in a1b2c3d?”). That is what gets searched, and the answer prompt includes the last three exchanges as context. The UI shows what was searched.
-2. **Hybrid retrieval.** Up to 200 commits are fetched by meaning (dense vectors) and also scored by keywords (BM25, with code split into words, so `ctx.ensure_object()` matches "ensure object"). The two rankings are merged by position with reciprocal rank fusion, so neither side's score scale can drown out the other, and a keyword match counts three times a meaning match. Exact identifiers such as function names and file paths are found as reliably as concepts; the [accuracy check](#accuracy) measures how well it works.
+2. **Hybrid retrieval.** Up to 200 commits are fetched by meaning (dense vectors). Pinecone returns only their IDs and scores; the text comes from the copy of each commit already saved in Postgres, which saves downloading about half a megabyte per question. The same commits are also scored by keywords (BM25, with code split into words, so `ctx.ensure_object()` matches "ensure object"). The two rankings are merged by position with reciprocal rank fusion, so neither side's score scale can drown out the other, and a keyword match counts three times a meaning match. Exact identifiers such as function names and file paths are found as reliably as concepts; the [accuracy check](#accuracy) measures how well it works.
 3. **Grounded prompt.** The model must answer only from the retrieved commits, cite SHAs and say when the evidence is insufficient.
 4. **Generation.** The user's active provider and model write the answer, which streams to the browser as server-sent events: first the commits that were found, then the answer piece by piece. All five providers stream through their official SDKs. It is rendered as Markdown with no raw HTML allowed, and only a complete answer is saved to the chat: one that fails halfway or is stopped is not.
 
@@ -344,7 +344,7 @@ cd backend
 python -m pytest
 ```
 
-There are 127 tests. GitHub Actions runs them, plus the frontend type-check and build, on every push to `main` and every pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests replace the embedding model with a small stand-in, so CI installs only `requirements.txt`, without torch.
+There are 129 tests. GitHub Actions runs them, plus the frontend type-check and build, on every push to `main` and every pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests replace the embedding model with a small stand-in, so CI installs only `requirements.txt`, without torch.
 
 - **Auth:** sessions, cookie flags, rate limiting and admin handling.
 - **Accounts:** email codes (hashing, expiry, attempt and resend limits), GitHub App sign-in, linking and token refresh, Google sign-in, pre-hijack protection, private-repo cloning, the Brevo request format and the startup check of the Brevo sender. All HTTP is mocked.
@@ -425,7 +425,7 @@ cd backend
 python -m evals.run_eval
 ```
 
-To check search with the live site's embedding model instead, add `--hosted`. It uses `PINECONE_API_KEY` from `backend/.env`, works in a separate throwaway index that is deleted at the end (the production index is never touched), and checks search only, writing `evals/RESULTS-hosted.md`. One run embeds about 600 commits, roughly 0.6M of the 5M embedding tokens Pinecone's free plan allows each month. Each search downloads the text of 200 commits, so on a slow connection it can take up to an hour.
+To check search with the live site's embedding model instead, add `--hosted`. It uses `PINECONE_API_KEY` from `backend/.env`, works in a separate throwaway index that is deleted at the end (the production index is never touched), and checks search only, writing `evals/RESULTS-hosted.md`. One run embeds about 600 commits, roughly 0.6M of the 5M embedding tokens Pinecone's free plan allows each month. Searches fetch only commit IDs and scores from Pinecone, so most of the time goes to embedding the commits.
 
 ```bash
 python -m evals.run_eval --hosted

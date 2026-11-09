@@ -238,12 +238,12 @@ def _save_exchange(db: Session, repo_id: str, chat_id: int | None, body: AskIn, 
 @router.post("/{repo_id}/ask", response_model=QueryOut)
 def ask(body: AskIn, repo: Repo = Depends(owned_repo),
         user: User = Depends(verified_user), db: Session = Depends(get_db)):
-    _ready_data(repo)
+    chunks = _chunks(repo)
     chat = _owned_chat(db, repo, body.conversation_id) if body.conversation_id is not None else None
     provider, model, generate = _llm_for(db, user)
     try:
         result = rag.ask(body.question, repo.namespace, generate, mode=body.mode, only_pr=body.only_pr,
-                         history=_chat_history(db, chat))
+                         history=_chat_history(db, chat), chunks=chunks)
     except ProviderError as e:
         raise provider_http_error(e)
     return _save_exchange(db, repo.id, chat.id if chat else None, body, provider, model,
@@ -259,7 +259,7 @@ def ask_stream(body: AskIn, repo: Repo = Depends(owned_repo),
                user: User = Depends(verified_user), db: Session = Depends(get_db)):
     """Like /ask, but the answer arrives as server-sent events while the model writes it:
     `sources` (what was found), then `delta` pieces, then `done` with the saved exchange, or `error`."""
-    _ready_data(repo)
+    chunks = _chunks(repo)
     chat = _owned_chat(db, repo, body.conversation_id) if body.conversation_id is not None else None
     provider, model_id, api_key = _credential_for(db, user)
     try:
@@ -267,7 +267,8 @@ def ask_stream(body: AskIn, repo: Repo = Depends(owned_repo),
         model = llm.find_model(provider, api_key, model_id)
         prepared = rag.prepare(body.question, repo.namespace,
                                lambda system, prompt: llm.generate(provider, api_key, model_id, system, prompt),
-                               mode=body.mode, only_pr=body.only_pr, history=_chat_history(db, chat))
+                               mode=body.mode, only_pr=body.only_pr, history=_chat_history(db, chat),
+                               chunks=chunks)
     except ProviderError as e:
         raise provider_http_error(e)
     repo_id, chat_id = repo.id, chat.id if chat else None

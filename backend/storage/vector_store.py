@@ -159,6 +159,21 @@ def _embed_docs(texts: list[str]) -> list:
     ).tolist()
 
 
+def vector_metadata(chunk: dict) -> dict:
+    """What's stored with each vector, and what search reads back. Built in one place, so text taken
+    from the database matches what the index holds exactly."""
+    meta = chunk["metadata"]
+    return {
+        "sha":       meta["sha"],
+        "author":    meta["author"],
+        "timestamp": meta["timestamp"],
+        "files":     meta["files"][:500],
+        "has_pr":    bool(meta["has_pr"]),
+        "pr_number": meta.get("pr_number", 0),
+        "text":      chunk["text"][:METADATA_TEXT_CHARS],
+    }
+
+
 # ── Backends ───────────────────────────────────────────────────────
 class _PineconeBackend:
     def __init__(self, index_name: str):
@@ -192,11 +207,18 @@ class _PineconeBackend:
     def upsert(self, vectors: list[dict], namespace: str):
         self.index.upsert(vectors=vectors, namespace=namespace)
 
-    def query(self, vector: list, top_k: int, namespace: str, flt: dict | None) -> list[tuple[float, dict]]:
-        kwargs = {"vector": vector, "top_k": top_k, "namespace": namespace, "include_metadata": True}
+    def _query(self, vector: list, top_k: int, namespace: str, flt: dict | None, include_metadata: bool):
+        kwargs = {"vector": vector, "top_k": top_k, "namespace": namespace, "include_metadata": include_metadata}
         if flt:
-            kwargs["filter"] = {k: {"$eq": v} for k, v in flt.items()}
-        return [(m.score, dict(m.metadata or {})) for m in self.index.query(**kwargs).matches]
+            kwargs["filter"] = {k: {"$eq": v} for k, v in flt.items()}   # filters still run on the stored metadata
+        return self.index.query(**kwargs).matches
+
+    def query(self, vector: list, top_k: int, namespace: str, flt: dict | None) -> list[tuple[float, dict]]:
+        return [(m.score, dict(m.metadata or {})) for m in self._query(vector, top_k, namespace, flt, True)]
+
+    def query_ids(self, vector: list, top_k: int, namespace: str, flt: dict | None) -> list[tuple[float, str]]:
+        # IDs and scores only: about 15 KB for 200 commits, instead of about 500 KB with their text
+        return [(m.score, m.id) for m in self._query(vector, top_k, namespace, flt, False)]
 
     def delete_namespace(self, namespace: str):
         from pinecone.exceptions import NotFoundException
@@ -231,16 +253,22 @@ class _LocalBackend:
                 data[v["id"]] = {"values": v["values"], "metadata": v["metadata"]}
             self._path(namespace).write_text(json.dumps(data))
 
-    def query(self, vector: list, top_k: int, namespace: str, flt: dict | None) -> list[tuple[float, dict]]:
+    def _scored(self, vector: list, top_k: int, namespace: str, flt: dict | None) -> list[tuple[float, str, dict]]:
         scored = []
-        for item in self._load(namespace).values():
+        for vid, item in self._load(namespace).items():
             meta = item["metadata"]
             if flt and any(meta.get(k) != v for k, v in flt.items()):
                 continue
             # Vectors are normalised, so the dot product is the cosine similarity
-            scored.append((sum(a * b for a, b in zip(vector, item["values"])), meta))
+            scored.append((sum(a * b for a, b in zip(vector, item["values"])), vid, meta))
         scored.sort(key=lambda x: x[0], reverse=True)
         return scored[:top_k]
+
+    def query(self, vector: list, top_k: int, namespace: str, flt: dict | None) -> list[tuple[float, dict]]:
+        return [(score, meta) for score, _, meta in self._scored(vector, top_k, namespace, flt)]
+
+    def query_ids(self, vector: list, top_k: int, namespace: str, flt: dict | None) -> list[tuple[float, str]]:
+        return [(score, vid) for score, vid, _ in self._scored(vector, top_k, namespace, flt)]
 
     def delete_namespace(self, namespace: str):
         self._path(namespace).unlink(missing_ok=True)
@@ -277,34 +305,31 @@ class VectorStore:
         for i in range(0, len(new), batch_size):
             batch  = new[i:i+batch_size]
             embeds = _embed_docs([c["text"] for c in batch])
-            vectors = [
-                {
-                    "id":     chunk["id"],
-                    "values": emb,
-                    "metadata": {
-                        "sha":       chunk["metadata"]["sha"],
-                        "author":    chunk["metadata"]["author"],
-                        "timestamp": chunk["metadata"]["timestamp"],
-                        "files":     chunk["metadata"]["files"][:500],
-                        "has_pr":    bool(chunk["metadata"]["has_pr"]),
-                        "pr_number": chunk["metadata"].get("pr_number", 0),
-                        "text":      chunk["text"][:METADATA_TEXT_CHARS],
-                    }
-                }
-                for chunk, emb in zip(batch, embeds)
-            ]
+            vectors = [{"id": chunk["id"], "values": emb, "metadata": vector_metadata(chunk)}
+                       for chunk, emb in zip(batch, embeds)]
             self.backend.upsert(vectors, self.namespace)
 
     # Hybrid search: meaning (dense vectors) and keywords (BM25), merged by rank
     def search(self, question: str, top_k: int = 5, filters: dict = None,
-               keyword_weight: float = KEYWORD_WEIGHT) -> list[dict]:
+               keyword_weight: float = KEYWORD_WEIGHT, chunks: list[dict] | None = None) -> list[dict]:
         """
         1. Fetch up to SEARCH_POOL commits by meaning, best first
         2. Score the same commits by keywords (BM25 over keyword_tokens)
         3. Merge the two rankings with reciprocal rank fusion (see `fuse`)
         4. Return the top_k, each with a 0-1 score
+
+        `chunks` is the repository's commits as saved in the database. With them, the index only returns
+        commit IDs and scores and the text comes from the chunks, which is the same text, without
+        downloading it from Pinecone on every question.
         """
-        candidates = self.backend.query(_embed_query(question), max(top_k, SEARCH_POOL), self.namespace, filters)
+        vector, pool = _embed_query(question), max(top_k, SEARCH_POOL)
+        if chunks is None:
+            candidates = self.backend.query(vector, pool, self.namespace, filters)
+        else:
+            by_id = {c["id"]: c for c in chunks}
+            candidates = [(score, vector_metadata(by_id[vid]))
+                          for score, vid in self.backend.query_ids(vector, pool, self.namespace, filters)
+                          if vid in by_id]
         if not candidates:
             return []
 

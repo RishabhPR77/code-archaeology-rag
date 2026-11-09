@@ -79,16 +79,17 @@ SUSPECT_K = (1, 3, 10)     # Who broke it? shows the top 3
 
 
 class _QueryCache:
-    """Each question is searched several ways; ask the index once for the largest pool and reuse its prefix."""
+    """Each question is searched several ways; ask the index once for the largest pool and reuse its prefix.
+    Like the app, searches pass the saved commits, so only commit IDs and scores come from the index."""
 
     def __init__(self, backend):
         self.backend, self.results = backend, {}
 
-    def query(self, vector, top_k, namespace, flt):
+    def query_ids(self, vector, top_k, namespace, flt):
         key = (tuple(vector), namespace, repr(flt))
         if key not in self.results or self.results[key][0] < top_k:
             want = max(top_k, vector_store.SEARCH_POOL)
-            self.results[key] = (want, self.backend.query(vector, want, namespace, flt))
+            self.results[key] = (want, self.backend.query_ids(vector, want, namespace, flt))
         return self.results[key][1][:top_k]
 
     def __getattr__(self, name):
@@ -138,10 +139,13 @@ def _prs(full_name: str, commits, cache: Path) -> list[PRRecord]:
     return result.prs
 
 
-def _old_search(store: VectorStore, question: str, top_k: int) -> list[dict]:
+def _old_search(store: VectorStore, question: str, top_k: int, chunks: list[dict]) -> list[dict]:
     """The search the app used before rank fusion, kept here to compare against: 0.6 x cosine +
     0.4 x BM25 (words split on spaces, divided by the best score) over the top_k * 4 commits by meaning."""
-    cands = store.backend.query(vector_store._embed_query(question), min(max(top_k * 4, 20), 200), store.namespace, None)
+    by_id = {c["id"]: c for c in chunks}
+    ids = store.backend.query_ids(vector_store._embed_query(question), min(max(top_k * 4, 20), 200),
+                                  store.namespace, None)
+    cands = [(d, vector_store.vector_metadata(by_id[vid])) for d, vid in ids if vid in by_id]
     if not cands:
         return []
     bm = BM25Okapi([m.get("text", "").lower().split() for _, m in cands]).get_scores(question.lower().split())
@@ -154,9 +158,10 @@ OLD_SEARCH = "Before: score mix (0.6 dense + 0.4 keywords)"
 APP_SEARCH = f"Rank fusion, keyword weight {vector_store.KEYWORD_WEIGHT:g} (the app)"
 SEARCHES = {
     OLD_SEARCH: _old_search,
-    "Dense only": lambda store, q, k: store.search(q, top_k=k, keyword_weight=0),
+    "Dense only": lambda store, q, k, chunks: store.search(q, top_k=k, keyword_weight=0, chunks=chunks),
     **{(APP_SEARCH if w == vector_store.KEYWORD_WEIGHT else f"Rank fusion, keyword weight {w:g}"):
-       (lambda store, q, k, w=w: store.search(q, top_k=k, keyword_weight=w)) for w in FUSION_WEIGHTS},
+       (lambda store, q, k, chunks, w=w: store.search(q, top_k=k, keyword_weight=w, chunks=chunks))
+       for w in FUSION_WEIGHTS},
 }
 
 
@@ -170,7 +175,8 @@ def _eval_search(name: str, chunks: list[dict]) -> dict:
         out[kind] = {"cases": len(cases), "ranks": {}}
         for label, search in SEARCHES.items():
             out[kind]["ranks"][label] = [
-                rank_of(c["answers"], [h["metadata"]["sha"] for h in search(store, c["question"], 8)]) for c in cases]
+                rank_of(c["answers"], [h["metadata"]["sha"] for h in search(store, c["question"], 8, indexed)])
+                for c in cases]
     store.delete_namespace()
     return out
 
@@ -191,7 +197,7 @@ def _eval_suspects(name: str, chunks: list[dict], fixes: list[dict]) -> dict:
 
         def ranked(search, weights):
             # Search the whole index, then keep the best 30 that existed when the bug was reported
-            hits = [h for h in search(store, case["report"], 200) if h["metadata"]["sha"] in visible][:30]
+            hits = [h for h in search(store, case["report"], 200, chunks) if h["metadata"]["sha"] in visible][:30]
             found, _ = rank_suspects(case["report"], before, {h["metadata"]["sha"]: h["score"] for h in hits},
                                      caused, top_n=10, weights=weights)
             return rank_of({case["answer"]}, [s["sha"] for s in found])
