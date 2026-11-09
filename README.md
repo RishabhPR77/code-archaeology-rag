@@ -6,6 +6,19 @@ Code Archaeologist turns a GitHub repository's commits, diffs, pull requests and
 
 You bring your own model: connect an **Anthropic, OpenAI, Google Gemini, Groq or OpenRouter** key and pick any model from that provider's live catalogue.
 
+**Live:** [code-archaeologist-a9ms.onrender.com](https://code-archaeologist-a9ms.onrender.com). It runs on free hosting, so the first visit after a quiet spell can take a minute to wake up.
+
+### At a glance
+
+- **Measured search quality.** On 583 questions taken from three open-source repositories, the right commit is among the 8 the model reads for **81–89%** of them, up from 65–79% before the search was rebuilt. An automatic [accuracy check](#accuracy) found the bug that was holding it back.
+- **Answers stream in** word by word, with a **Stop** button that keeps what was written.
+- **Finds what broke.** Bug origins traces each bug fix back to the commit that introduced it, and **Who broke it?** ranks likely culprits for a new bug report: on 157 real GitHub issues, the cause is in its top 3 five times as often as by guessing.
+- **Built to run for free and safely:** five LLM providers with each user's own encrypted key, GitHub and Google sign-in, 135 tests in GitHub Actions CI, deployed on Render, Neon and Pinecone.
+
+![Asking pallets/flask why app.query was added: it searches the history, finds the commits, and the answer streams in with citations](docs/screenshots/ask-streaming.gif)
+
+*On the live site, asking [pallets/flask](https://github.com/pallets/flask) why `app.query` was added: it searches the history, finds the commits, and the answer streams in, citing the commits it used.*
+
 ![Landing page](docs/screenshots/landing.jpg)
 
 The landing page plays an animated walkthrough of the whole flow: connect a model, ingest a repository, ask why, explore the history.
@@ -62,6 +75,18 @@ Code Archaeologist makes that history answerable:
 | **Private repositories** | Through a GitHub App, users pick which of their repositories to share. Access is read-only and can be changed on GitHub at any time. |
 
 ![Repository overview](docs/screenshots/overview.jpg)
+
+![An answer's source commits, each with its SHA, author, date, pull request, files and relevance](docs/screenshots/answer-sources.jpg)
+
+*Every answer lists the commits it was built from, each linked to GitHub.*
+
+![Bug origins for pallets/flask: 21 bug fixes, 14 traced to a likely cause, a median of 867 days from cause to fix, and the commits behind several fixes](docs/screenshots/bug-origins.jpg)
+
+*Bug origins traces each fix back to the commit that most likely caused it, and flags commits that needed several fixes.*
+
+![Who broke it? ranking three suspect commits for a bug report, each with a score and the reasons it was flagged](docs/screenshots/who-broke-it.jpg)
+
+*Who broke it? takes a bug report with a stack-trace line and ranks the three most likely culprit commits, with the reasons for each.*
 
 ## Bring your own model
 
