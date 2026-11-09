@@ -108,13 +108,15 @@ def _when(epoch: str) -> str:
     return datetime.fromtimestamp(int(epoch)).isoformat() if epoch else ""
 
 
-def find_bug_origins(repo_path: str, commits) -> list[dict]:
-    """Every non-merge bug fix among `commits`, newest first, with its likely origins."""
+def find_bug_origins(repo_path: str, commits, is_fix=None) -> list[dict]:
+    """Every non-merge bug fix among `commits`, newest first, with its likely origins.
+    `is_fix(commit)` decides which commits count as fixes; by default, ones whose message reads like a fix."""
     repo = git.Repo(repo_path)
     ingested = {c.sha for c in commits}
+    is_fix = is_fix or (lambda c: commit_type(c.message) == "fix")
     fixes = []
     for c in commits:
-        if commit_type(c.message) != "fix" or len(c.parent_shas) != 1:
+        if not is_fix(c) or len(c.parent_shas) != 1:
             continue
         fix = {"sha": c.sha[:7], "message": c.message.split("\n")[0][:200], "author": c.author,
                "timestamp": c.timestamp, "status": "traced", "origins": [], "older_lines": 0, "days": None}

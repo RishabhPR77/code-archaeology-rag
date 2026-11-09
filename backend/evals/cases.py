@@ -54,6 +54,34 @@ def retrieval_cases(chunks: list[dict]) -> tuple[list[dict], list[dict], list[di
     return indexed, as_cases(titles), as_cases(descriptions)
 
 
+_CLOSING = re.compile(
+    r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b:?\s+"
+    r"(?:(?P<repo>[\w.-]+/[\w.-]+)?#(?P<num>\d+)|https://github\.com/(?P<urlrepo>[\w.-]+/[\w.-]+)/issues/(?P<urlnum>\d+))",
+    re.IGNORECASE)
+_HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+
+
+def closing_issues(text: str, repo: str) -> list[int]:
+    """Issue numbers a PR or commit says it closes, using GitHub's closing keywords ("Fixes #12",
+    "closes owner/repo#12", or a link to the issue). References to other repositories are ignored."""
+    found = []
+    for m in _CLOSING.finditer(text or ""):
+        other = m["repo"] or m["urlrepo"]
+        if other and other.lower() != repo.lower():
+            continue
+        n = int(m["num"] or m["urlnum"])
+        if n not in found:
+            found.append(n)
+    return found
+
+
+def issue_report(issue: dict, max_chars: int = 4000) -> str:
+    """A GitHub issue as a user would paste it into Who broke it?: title, then the description with
+    template comments removed. Code blocks stay, since stack traces in them name files."""
+    body = _HTML_COMMENT.sub("", issue.get("body") or "").strip()
+    return f"{issue['title'].strip()}\n\n{body}".strip()[:max_chars]
+
+
 def suspect_cases(fixes: list[dict]) -> list[dict]:
     """Traced fixes whose cause is one of the ingested commits."""
     cases = []
@@ -61,6 +89,7 @@ def suspect_cases(fixes: list[dict]) -> list[dict]:
         if fix["status"] != "traced" or not fix["origins"][0]["ingested"]:
             continue
         cases.append({
+            "fix": fix.get("sha"),
             "report": fix["message"],
             "before": fix["timestamp"],
             "answer": fix["origins"][0]["sha"],

@@ -37,8 +37,9 @@ def _check_rate(g) -> int:
             return -1
 
 def fetch_prs(repo_name: str, max_prs: int = 200, token: str | None = None,
-              since: datetime | None = None) -> FetchResult:
-    """Fetch merged PRs. `since` skips PRs merged before the oldest ingested commit."""
+              since: datetime | None = None, details: bool = True) -> FetchResult:
+    """Fetch merged PRs. `since` skips PRs merged before the oldest ingested commit.
+    `details=False` skips review comments, reviews and discussion (three extra requests per PR)."""
     g = Github(auth=Auth.Token(token)) if token else Github()
     repo = g.get_repo(repo_name)
     records = []
@@ -74,9 +75,9 @@ def fetch_prs(repo_name: str, max_prs: int = 200, token: str | None = None,
         old_streak = 0
 
         try:
-            # Only fetch heavy review/discussion data if rate limit allows
-            remaining = _check_rate(g)
-            fetch_details = remaining == -1 or remaining > 1000
+            # Only fetch heavy review/discussion data if rate limit allows (no check needed without details)
+            remaining = _check_rate(g) if details else -1
+            fetch_details = details and (remaining == -1 or remaining > 1000)
 
             review_comments = []
             review_summaries = []

@@ -48,3 +48,22 @@ def test_scores():
     assert rank_of({"b"}, ["a", "b", "c"]) == 2 and rank_of({"z"}, ["a"]) is None
     assert scores([1, 2, None, 5], ks=(1, 3)) == {"@1": 0.25, "@3": 0.5, "mrr": pytest.approx((1 + 0.5 + 0 + 0.2) / 4)}
     assert scores([], ks=(1,)) == {"@1": None, "mrr": None}
+
+
+def test_closing_issues_follow_githubs_keywords():
+    from evals.cases import closing_issues
+    text = ("Fixes #12. Also closes pallets/click#34 and resolves https://github.com/pallets/click/issues/56.\n"
+            "Related to #78, fixes other/repo#90, see #12 again; Fix #12")
+    assert closing_issues(text, "pallets/click") == [12, 34, 56]
+    assert closing_issues("Prefix fixes nothing #5", "a/b") == [] and closing_issues(None, "a/b") == []
+
+
+def test_an_issue_becomes_the_report_a_user_would_paste():
+    from evals.cases import issue_report
+    issue = {"title": " Help text is cut off ", "body": "<!-- Please describe the bug -->\nThe help for `--name` "
+             "wraps wrongly.\n\n```\nFile \"src/click/formatting.py\", line 42\n```"}
+    report = issue_report(issue)
+    assert report.startswith("Help text is cut off\n\nThe help for `--name` wraps wrongly.")
+    assert "Please describe" not in report and "src/click/formatting.py" in report   # stack traces stay
+    assert issue_report({"title": "Crash", "body": None}) == "Crash"
+    assert len(issue_report({"title": "x", "body": "y" * 9000})) == 4000

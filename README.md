@@ -345,7 +345,7 @@ cd backend
 python -m pytest
 ```
 
-There are 132 tests. GitHub Actions runs them, plus the frontend type-check and build, on every push to `main` and every pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests replace the embedding model with a small stand-in, so CI installs only `requirements.txt`, without torch.
+There are 134 tests. GitHub Actions runs them, plus the frontend type-check and build, on every push to `main` and every pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests replace the embedding model with a small stand-in, so CI installs only `requirements.txt`, without torch.
 
 - **Auth:** sessions, cookie flags, rate limiting and admin handling.
 - **Accounts:** email codes (hashing, expiry, attempt and resend limits), GitHub App sign-in, linking and token refresh, Google sign-in, pre-hijack protection, private-repo cloning, the Brevo request format and the startup check of the Brevo sender. All HTTP is mocked.
@@ -355,7 +355,7 @@ There are 132 tests. GitHub Actions runs them, plus the frontend type-check and 
 - **Bug origins:** a real git repository built in the test traces a fix to the commit that introduced the bug, skips docs, tests and add-only fixes, and reports lines older than a shallow clone.
 - **Who broke it?:** file names and stack-trace paths are read from a report, paths match on their last folders, the three signals combine as documented, unrelated commits are left out, the `since` date filters, and commits behind earlier bugs rank higher.
 - **Search:** code is split into words, common words are skipped, the two rankings merge by position, and keywords find a commit the embedding ranked low.
-- **Accuracy check:** the helpers that turn a repository's history into questions remove the answer's own PR text from the index and only use bug fixes from before each report.
+- **Accuracy check:** the helpers that turn a repository's history into questions remove the answer's own PR text from the index and only use bug fixes from before each report, and find the GitHub issue a fix closes.
 - **Provider adapters:** all five adapters run their **real SDKs against mocked HTTP**, with response bodies shaped like each provider's official API reference. This pins down exactly what is sent (for example, no `temperature` for Anthropic and OpenAI) and how responses and errors are parsed. Streaming is tested the same way, with event streams in each provider's documented format, including errors that arrive halfway through an answer.
 
 For the frontend, run a type-check and production build:
@@ -367,10 +367,10 @@ npm run build
 
 ## Accuracy
 
-How often does search find the right commit, and does Who broke it? point at the right culprit? [`backend/evals/run_eval.py`](backend/evals/run_eval.py) measures both on real repositories, using questions and answers taken from their own history, so nothing is labelled by hand:
+How often does search find the right commit, and does Who broke it? point at the right culprit? Two scripts in [`backend/evals/`](backend/evals) measure both on real repositories, using questions and answers taken from their own history, so nothing is labelled by hand:
 
 - **Search:** each merged pull request becomes a question (its title, or the first real sentence of its description), and the answer is the commit it belongs to. That PR text is removed from the index first, and the title is also cut from the commit message, so the answer can't simply match itself.
-- **Who broke it?:** each bug fix that Bug origins traced becomes a report (the fix's commit message), and the traced commit is the answer. Only commits and fixes from before the fix count.
+- **Who broke it?:** a fix is a commit whose pull request or message closes a GitHub issue. Bug origins traces what it changed back to the commit that last wrote those lines, which is the answer, and the report is the issue itself, its title and description as a user would paste them. Only commits and fixes from before the fix count.
 
 Latest run: the last 200 commits of `pallets/click`, `pallets/flask` and `encode/httpx`, with local BGE-small embeddings. Full tables are in [`backend/evals/RESULTS.md`](backend/evals/RESULTS.md).
 
@@ -381,19 +381,38 @@ Latest run: the last 200 commits of `pallets/click`, `pallets/flask` and `encode
 | PR title questions, before | 320 | 41% | 56% | 69% | 0.50 |
 | PR title questions, now | 320 | **53%** | **70%** | **84%** | **0.63** |
 
-| Who broke it? | Reports | Cause first | In the top 3 | In the top 10 |
-|---|---:|---:|---:|---:|
-| Before | 13 | 31% | 31% | 38% |
-| Now | 13 | 31% | **46%** | **69%** |
-| Baseline: newest commit first | 13 | 15% | 15% | 31% |
-
 What it shows:
 
 - **What was wrong.** Search used to add 0.6 × the dense score to 0.4 × the keyword score. Dense scores among the candidates bunch together (a spread of about 0.08), while keyword scores divided by the best one spread across almost the whole 0 to 1 range, so in practice keywords decided the order. Words were also split on spaces, so `echo()` never matched "echo". The result was worse than dense search alone.
 - **The fix.** Rank fusion merges the two rankings by position, keywords are matched over every commit instead of only the top 32 by meaning, code is split into words, and a keyword match counts three times a meaning match. It beats the old search for both question types in every repository, and beats dense search alone on every measure.
 - **How the weight was chosen.** Weights from 1 to 10 were tried on click and flask, and 3 did best. On httpx, which wasn't used to choose it, weight 3 also beat weight 1 (the right commit in the top 8 for 76% of description questions instead of 70%), so the gain isn't luck. Stemming and giving the commit message extra weight were tried too and made no reliable difference, so they were left out.
-- **Who broke it? gains from the better search:** the traced cause is in the top 3 for 6 of 13 reports instead of 4. 13 cases are still too few to tune its weights, and a one-line fix message is much less to go on than a real bug report.
-- **The absolute numbers are pessimistic.** The PR text is removed from the index, and the local model reads only about 512 tokens of each commit (the live model reads about 2048). The comparisons between searches are the reliable part. They haven't been repeated with the live site's embedding model yet.
+- **The absolute numbers are pessimistic.** The PR text is removed from the index, and the local model reads only about 512 tokens of each commit. The comparisons between searches are the reliable part.
+
+**With the live site's embedding model** (`run_eval --hosted`, Pinecone's llama-text-embed-v2, which reads about 2,048 tokens of each commit; full tables in [`backend/evals/RESULTS-hosted.md`](backend/evals/RESULTS-hosted.md)):
+
+| Search, live model | Right commit first | In the top 3 | In the top 8 | MRR |
+|---|---:|---:|---:|---:|
+| PR description questions, before | 40% | 50% | 65% | 0.47 |
+| PR description questions, now (keyword weight 3) | **51%** | **71%** | **81%** | **0.62** |
+| PR title questions, before | 46% | 64% | 79% | 0.56 |
+| PR title questions, now (keyword weight 3) | **55%** | **74%** | **87%** | **0.66** |
+
+The live site does better than the local check suggested: the right commit is among the 8 sources for 81–87% of questions. The stronger model also shifts the best keyword weight: with it, dense search alone is much better than with the local model, and a keyword weight of 1 did slightly better than 3 (81% / 89% in the top 8, MRR 0.64 / 0.70).
+
+### Who broke it? on real bug reports
+
+[`backend/evals/bug_reports.py`](backend/evals/bug_reports.py), on the last 1,000 commits of the same three repositories: 628 commits close an issue, 173 of them trace back to an earlier commit in the window, giving 157 cases (one per issue). Full tables are in [`backend/evals/RESULTS-bug-reports.md`](backend/evals/RESULTS-bug-reports.md).
+
+| Who broke it?, 157 real issues | Cause first | In the top 3 | In the top 10 | MRR |
+|---|---:|---:|---:|---:|
+| The app (search 0.5, files 0.3, risk 0.2) | **17%** | **32%** | **50%** | **0.26** |
+| Description match only | 17% | 25% | 43% | 0.24 |
+| The fix's commit message as the report | 15% | 30% | 48% | 0.25 |
+| Baseline: newest commit first | 4% | 6% | 12% | 0.06 |
+
+- **It's five times better than guessing.** The traced cause is in the top 3 for 32% of real issues, against 6% for picking the newest commits.
+- **The weights hold up.** Turning off the files-named and risk signals drops the top 3 from 32% to 25%, and no other mix tried did clearly better, so they stay as they are.
+- **It's a starting point, not an answer.** About one bug in three has its cause among the three suspects shown. The test is harder than everyday use, since it ranks among up to 1,000 earlier commits where the app usually holds 100, and tracing finds a likely cause rather than a certain one.
 
 ### What good looks like
 
@@ -411,13 +430,13 @@ Rules of thumb for this test, which is harder than everyday use because the PR t
 | Very good | 85–92% | 60–70% | 0.70–0.80 |
 | Excellent | over 92% | over 70% | over 0.80 |
 
-On the number that matters most, search went from weak (55% in the top 8) to good (78–84%). Putting the right commit first (49–53%, MRR 0.59–0.63) is between OK and good, which is where a reranker would help most. For Who broke it?, which shows three suspects, good means the cause is in the top 3 for about half of real bug reports and very good means 60% or more, measured on at least 50 reports (with 13, one report moves the number by 8 points).
+On the number that matters most, search went from weak (55% in the top 8) to good (78–84%). Putting the right commit first (49–53%, MRR 0.59–0.63) is between OK and good, which is where a reranker would help most. For Who broke it?, which shows three suspects, good means the cause is in the top 3 for about half of real bug reports and very good means 60% or more. On 157 real issues it's at 32%, between weak and OK.
 
 Next steps toward very good:
 
 1. **Rerank the top results** with a model that reads the question and each commit together (a cross-encoder). Pinecone hosts one (`bge-reranker-v2-m3`), but its free plan allows about 500 rerank requests a month, so search would need to fall back when they run out.
-2. **Repeat the check with the live embedding model**, which reads four times more of each commit.
-3. **Test Who broke it? on real bug reports**, using the GitHub issue each fix closes, over more commits so there are at least 50 cases. This needs a GitHub token for the extra API requests.
+2. **Use a keyword weight of 1 with the live model.** The local check chose 3, but with Pinecone's stronger model, 1 did slightly better on every measure.
+3. **Help Who broke it? with the stronger model and a reranker too.** Its description match uses the same search, so both should lift it.
 
 Run it yourself (needs `requirements-local.txt` for the embedding model; about 20 minutes the first time and 10 after that, and it never touches Pinecone, the database or `GITHUB_TOKEN`):
 
@@ -430,6 +449,12 @@ To check search with the live site's embedding model instead, add `--hosted`. It
 
 ```bash
 python -m evals.run_eval --hosted
+```
+
+Who broke it? on real bug reports (local embeddings; reads public pull requests and issues from GitHub, using `GITHUB_TOKEN` from `backend/.env` when it's set, and caches them; about 40 minutes the first time):
+
+```bash
+python -m evals.bug_reports
 ```
 
 ## Project structure
