@@ -4,6 +4,7 @@
 Model lists always come live from the provider's official list-models endpoint,
 called with the user's own key — nothing about model names is hardcoded here.
 """
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
@@ -49,6 +50,9 @@ class LLMProvider(Protocol):
     def list_models(self, api_key: str) -> list[ModelInfo]: ...
 
     def generate(self, api_key: str, model: ModelInfo, system: str, prompt: str) -> str: ...
+
+    # The answer in pieces as the model writes it; errors can come after some pieces
+    def stream(self, api_key: str, model: ModelInfo, system: str, prompt: str) -> Iterator[str]: ...
 
 
 def kind_from_status(status: int | None) -> ErrorKind:

@@ -8,6 +8,8 @@ Docs: https://ai.google.dev/api/models
   (image, TTS, live, transcription, robotics, research agents), filtered by ID.
 - Thinking tokens count toward max_output_tokens.
 """
+from collections.abc import Iterator
+
 from google import genai
 from google.genai import errors, types
 
@@ -48,19 +50,25 @@ class GeminiProvider:
         except errors.APIError as e:
             raise _error(e) from e
 
+    def _config(self, model: ModelInfo, system: str) -> types.GenerateContentConfig:
+        return types.GenerateContentConfig(system_instruction=system, max_output_tokens=max_output_for(model))
+
     def generate(self, api_key: str, model: ModelInfo, system: str, prompt: str) -> str:
         try:
             resp = self._client(api_key).models.generate_content(
-                model=model.id,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=system,
-                    max_output_tokens=max_output_for(model),
-                ),
-            )
+                model=model.id, contents=prompt, config=self._config(model, system))
         except errors.APIError as e:
             raise _error(e) from e
         return require_text(resp.text, model)
+
+    def stream(self, api_key: str, model: ModelInfo, system: str, prompt: str) -> Iterator[str]:
+        try:
+            for chunk in self._client(api_key).models.generate_content_stream(
+                    model=model.id, contents=prompt, config=self._config(model, system)):
+                if chunk.text:   # chunks that only carry thinking have no text
+                    yield chunk.text
+        except errors.APIError as e:
+            raise _error(e) from e
 
 
 def _error(e: errors.APIError) -> ProviderError:

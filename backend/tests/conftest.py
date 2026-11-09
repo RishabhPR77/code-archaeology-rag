@@ -58,6 +58,11 @@ class FakeProvider:
             return f"Standalone: {prompt.rsplit('FOLLOW-UP QUESTION:', 1)[1].strip()}"
         return f"Answer from {model.id}: see `abc1234`."
 
+    def stream(self, api_key, model, system, prompt):
+        # The same answer as generate(), in three pieces
+        answer = self.generate(api_key, model, system, prompt)
+        yield from (answer[:7], answer[7:20], answer[20:])
+
 
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch):

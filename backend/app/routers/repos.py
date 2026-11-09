@@ -1,14 +1,16 @@
 # app/routers/repos.py
 import json
+import logging
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query as Q, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import llm
 from app.config import get_settings
-from app.db import get_db
+from app.db import SessionLocal, get_db
 from app.deps import owned_repo, verified_user
 from app.llm import ProviderError
 from app.models import Conversation, IngestEvent, Query, Repo, RepoData, User, utcnow
@@ -22,6 +24,7 @@ from ingestion import bug_origins
 from retrieval import analytics
 
 router = APIRouter(prefix="/api/repos", tags=["repos"])
+log = logging.getLogger(__name__)
 
 
 def repo_out(repo: Repo) -> RepoOut:
@@ -59,14 +62,19 @@ def _check_ingest_allowed(db: Session, user: User, max_commits: int, new_repo: b
                             f"You've used all {limits.max_ingests_day} ingests for the last 24 hours.")
 
 
-def _llm_for(db: Session, user: User):
-    """Return (provider, model, generate) for the user's active provider."""
+def _credential_for(db: Session, user: User) -> tuple[str, str, str]:
+    """(provider, model, api_key) for the user's active provider."""
     if not user.active_provider:
         raise HTTPException(status.HTTP_409_CONFLICT, "Connect a model provider in Settings first")
     cred = credential(db, user, user.active_provider)
     if cred is None or not cred.model:
         raise HTTPException(status.HTTP_409_CONFLICT, "Choose a model in Settings first")
-    api_key, provider, model = decrypt_secret(cred.key_enc), cred.provider, cred.model
+    return cred.provider, cred.model, decrypt_secret(cred.key_enc)
+
+
+def _llm_for(db: Session, user: User):
+    """Return (provider, model, generate) for the user's active provider."""
+    provider, model, api_key = _credential_for(db, user)
 
     def generate(system: str, prompt: str) -> str:
         return llm.generate(provider, api_key, model, system, prompt)
@@ -202,36 +210,96 @@ def _owned_chat(db: Session, repo: Repo, chat_id: int) -> Conversation:
     return chat
 
 
+def _chat_history(db: Session, chat: Conversation | None) -> rag.History:
+    if chat is None:
+        return []
+    recent = db.scalars(select(Query).where(Query.conversation_id == chat.id)
+                        .order_by(Query.created_at.desc(), Query.id.desc()).limit(rag.HISTORY_TURNS)).all()
+    return [(q.question, q.answer) for q in reversed(recent)]
+
+
+def _save_exchange(db: Session, repo_id: str, chat_id: int | None, body: AskIn, provider: str, model: str,
+                   answer: str, sources: list[dict], search_query: str) -> QueryOut:
+    # The chat is created only once there is an answer, so a failed first question leaves no empty chat
+    chat = db.get(Conversation, chat_id) if chat_id is not None else None
+    if chat is None:
+        chat = Conversation(repo_id=repo_id, title=_chat_title(body.question))
+        db.add(chat)
+        db.flush()
+    chat.updated_at = utcnow()
+    q = Query(repo_id=repo_id, kind="ask", conversation_id=chat.id, question=body.question,
+              search_query=search_query if search_query != body.question else None,
+              answer=answer, mode=body.mode, provider=provider, model=model, sources_json=json.dumps(sources))
+    db.add(q)
+    db.commit()
+    return _query_out(q)
+
+
 @router.post("/{repo_id}/ask", response_model=QueryOut)
 def ask(body: AskIn, repo: Repo = Depends(owned_repo),
         user: User = Depends(verified_user), db: Session = Depends(get_db)):
     _ready_data(repo)
     chat = _owned_chat(db, repo, body.conversation_id) if body.conversation_id is not None else None
     provider, model, generate = _llm_for(db, user)
-    history = []
-    if chat is not None:
-        recent = db.scalars(select(Query).where(Query.conversation_id == chat.id)
-                            .order_by(Query.created_at.desc(), Query.id.desc()).limit(rag.HISTORY_TURNS)).all()
-        history = [(q.question, q.answer) for q in reversed(recent)]
     try:
         result = rag.ask(body.question, repo.namespace, generate, mode=body.mode, only_pr=body.only_pr,
-                         history=history)
+                         history=_chat_history(db, chat))
     except ProviderError as e:
         raise provider_http_error(e)
-    if chat is None:
-        # Created only once there is an answer, so a failed first question leaves no empty chat
-        chat = Conversation(repo_id=repo.id, title=_chat_title(body.question))
-        db.add(chat)
-        db.flush()
-    chat.updated_at = utcnow()
-    searched = result["search_query"]
-    q = Query(repo_id=repo.id, kind="ask", conversation_id=chat.id, question=body.question,
-              search_query=searched if searched != body.question else None,
-              answer=result["answer"], mode=body.mode, provider=provider, model=model,
-              sources_json=json.dumps(result["sources"]))
-    db.add(q)
-    db.commit()
-    return _query_out(q)
+    return _save_exchange(db, repo.id, chat.id if chat else None, body, provider, model,
+                          result["answer"], result["sources"], result["search_query"])
+
+
+def _sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+@router.post("/{repo_id}/ask/stream")
+def ask_stream(body: AskIn, repo: Repo = Depends(owned_repo),
+               user: User = Depends(verified_user), db: Session = Depends(get_db)):
+    """Like /ask, but the answer arrives as server-sent events while the model writes it:
+    `sources` (what was found), then `delta` pieces, then `done` with the saved exchange, or `error`."""
+    _ready_data(repo)
+    chat = _owned_chat(db, repo, body.conversation_id) if body.conversation_id is not None else None
+    provider, model_id, api_key = _credential_for(db, user)
+    try:
+        # A bad key, a retired model or a failed search is a normal error response, before anything streams
+        model = llm.find_model(provider, api_key, model_id)
+        prepared = rag.prepare(body.question, repo.namespace,
+                               lambda system, prompt: llm.generate(provider, api_key, model_id, system, prompt),
+                               mode=body.mode, only_pr=body.only_pr, history=_chat_history(db, chat))
+    except ProviderError as e:
+        raise provider_http_error(e)
+    repo_id, chat_id = repo.id, chat.id if chat else None
+    searched = prepared["search_query"]
+
+    def events():
+        yield _sse("sources", {"sources": prepared["sources"],
+                               "search_query": searched if searched != body.question else None})
+        parts = []
+        try:
+            pieces = (llm.stream(provider, model, api_key, rag.SYSTEM_PROMPT, prepared["prompt"])
+                      if prepared["prompt"] else iter([rag.NO_COMMITS]))
+            for piece in pieces:
+                parts.append(piece)
+                yield _sse("delta", {"text": piece})
+        except ProviderError as e:
+            yield _sse("error", {"message": e.message})
+            return
+        except Exception:
+            log.exception("Streaming an answer failed")
+            yield _sse("error", {"message": "Something went wrong while writing the answer. Please try again."})
+            return
+        # Only a complete answer is saved; if the browser disconnects, this generator just stops.
+        # The request's session isn't used here: it may already be closed when the stream ends.
+        with SessionLocal() as s:
+            saved = _save_exchange(s, repo_id, chat_id, body, provider, model_id, "".join(parts).strip(),
+                                   prepared["sources"], searched)
+        yield _sse("done", saved.model_dump(mode="json"))
+
+    # no-cache and X-Accel-Buffering stop proxies from holding the stream back
+    return StreamingResponse(events(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @router.get("/{repo_id}/chats", response_model=list[ConversationOut])

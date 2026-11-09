@@ -7,6 +7,7 @@ Docs: https://developers.openai.com/api/docs/models
   embeddings, moderation) are filtered out by ID.
 - No temperature: current flagship models are reasoning models.
 """
+from collections.abc import Iterator
 from datetime import date
 
 import openai
@@ -65,6 +66,33 @@ class OpenAIProvider:
         except openai.APIConnectionError as e:
             raise ProviderError("unavailable", "Couldn't reach the OpenAI API.") from e
         return require_text(resp.output_text, model)
+
+    def stream(self, api_key: str, model: ModelInfo, system: str, prompt: str) -> Iterator[str]:
+        try:
+            events = self._client(api_key).responses.create(
+                model=model.id,
+                instructions=system,
+                input=prompt,
+                max_output_tokens=max_output_for(model),
+                store=False,
+                stream=True,
+            )
+            with events:
+                for event in events:
+                    if event.type == "response.output_text.delta":
+                        yield event.delta
+                    elif event.type == "response.failed":
+                        error = event.response.error
+                        raise ProviderError("unavailable", (error.message if error else None)
+                                            or "OpenAI couldn't finish the answer.")
+                    elif event.type == "error":
+                        raise ProviderError("unavailable", event.message or "OpenAI stopped the answer with an error.")
+        except openai.APIStatusError as e:
+            raise ProviderError(kind_from_status(e.status_code), _message(e)) from e
+        except openai.APIConnectionError as e:
+            raise ProviderError("unavailable", "Couldn't reach the OpenAI API.") from e
+        except openai.APIError as e:   # an error event in the middle of the stream
+            raise ProviderError("unavailable", e.message or "OpenAI stopped the answer with an error.") from e
 
 
 def _message(e: openai.APIStatusError) -> str:

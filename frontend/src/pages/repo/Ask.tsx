@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, ChevronDown, GitPullRequest, MessageSquareText, Plus, Sparkles, Trash2 } from "lucide-react";
+import { ArrowUp, ChevronDown, GitPullRequest, MessageSquareText, Plus, Sparkles, Square, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Link, useSearchParams } from "react-router";
 import { toast } from "sonner";
@@ -20,6 +20,12 @@ const SUGGESTIONS = [
   "Which parts of the codebase are the most fragile?",
   "What new features were added and why?",
 ];
+
+// The answer being written: text so far, and what the search found
+interface Draft { text: string; searchQuery: string | null; found: boolean }
+
+// The user pressed Stop
+const isAbort = (e: unknown) => e instanceof DOMException && e.name === "AbortError";
 
 const MODES: { value: AskMode; label: string }[] = [
   { value: "detailed", label: "Detailed" },
@@ -146,6 +152,8 @@ export function Ask({ repo }: { repo: Repo }) {
   const [mode, setMode] = useState<AskMode>("detailed");
   const [onlyPr, setOnlyPr] = useState(false);
   const [toDelete, setToDelete] = useState<Chat | null>(null);
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const stopper = useRef<AbortController | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const hasModel = !!(user.active_provider && user.active_model);
 
@@ -159,15 +167,36 @@ export function Ask({ repo }: { repo: Repo }) {
   };
 
   const ask = useMutation({
-    mutationFn: ({ q, chat }: { q: string; chat: number | null }) => api.ask(repo.id, q, mode, onlyPr, chat),
+    mutationFn: async ({ q, chat, mode }: { q: string; chat: number | null; mode: AskMode }) => {
+      const controller = new AbortController();
+      stopper.current = controller;
+      let text = "";
+      let timer: number | undefined;
+      // Re-rendering the Markdown for every small piece is wasteful; show new text at most every 50 ms
+      const show = () => { timer = undefined; setDraft((d) => d && { ...d, text }); };
+      setDraft({ text: "", searchQuery: null, found: false });
+      try {
+        return await api.ask(repo.id, q, mode, onlyPr, chat, {
+          onSources: ({ search_query }) => setDraft((d) => d && { ...d, searchQuery: search_query, found: true }),
+          onText: (piece) => { text += piece; timer ??= window.setTimeout(show, 50); },
+        }, controller.signal);
+      } finally {
+        window.clearTimeout(timer);
+        show();
+        stopper.current = null;
+      }
+    },
     onSuccess: (result, { chat }) => {
       const id = result.conversation_id!;
       qc.setQueryData<QueryResult[]>(messagesKey(id), (old) => [...(old ?? []), result]);
       qc.invalidateQueries({ queryKey: chatsKey });
+      setDraft(null);
       setQuestion("");
       // A first question opens its new chat, unless the user has moved to another one meanwhile
       if (chat === null && chatId === null) select(id);
     },
+    // A stopped answer simply disappears; any other failure keeps the text so far next to the error
+    onError: (error) => { if (isAbort(error)) setDraft(null); },
   });
   const remove = useMutation({
     mutationFn: (chat: Chat) => api.deleteChat(repo.id, chat.id),
@@ -187,14 +216,26 @@ export function Ask({ repo }: { repo: Repo }) {
   }, [missing, setParams]);
 
   const items = chatId !== null ? messages.data ?? [] : [];
-  const pendingHere = ask.isPending && ask.variables?.chat === chatId;
+  const askedHere = ask.variables?.chat === chatId;
+  const pendingHere = ask.isPending && askedHere;
+  const askError = ask.error && !isAbort(ask.error) ? ask.error : null;
+  const showDraft = draft !== null && askedHere && (ask.isPending || askError !== null);
 
   useEffect(() => {
     if (items.length || pendingHere) bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [items.length, pendingHere, chatId]);
 
+  // Follow the answer as it grows, unless the user has scrolled up to read something else
+  const draftText = draft?.text ?? "";
+  useEffect(() => {
+    const marker = bottom.current;
+    if (draftText && marker && marker.getBoundingClientRect().top - window.innerHeight < 240) {
+      marker.scrollIntoView({ block: "end" });
+    }
+  }, [draftText]);
+
   const submit = (q = question) => {
-    if (q.trim().length >= 3 && !ask.isPending) ask.mutate({ q: q.trim(), chat: chatId });
+    if (q.trim().length >= 3 && !ask.isPending) ask.mutate({ q: q.trim(), chat: chatId, mode });
   };
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
@@ -252,23 +293,48 @@ export function Ask({ repo }: { repo: Repo }) {
 
         <div className="space-y-8">
           {items.map((q) => <Exchange key={q.id} q={q} repoUrl={repo.url} />)}
-          {pendingHere && (
+          {showDraft && draft && (
             <div className="space-y-3">
               <div className="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-accent px-4 py-2.5 text-[14px] text-accent-fg">{ask.variables?.q}</div>
-              <Card className="p-5">
-                <div className="flex items-center gap-2 text-xs text-muted">
-                  <span className="flex gap-1">
-                    {[0, 1, 2].map((i) => <span key={i} className="size-1.5 animate-bounce rounded-full bg-accent" style={{ animationDelay: `${i * 120}ms` }} />)}
-                  </span>
-                  Searching history and asking <span className="font-mono">{user.active_model}</span>…
-                </div>
-                <div className="mt-4 space-y-2"><Skeleton className="h-3 w-11/12" /><Skeleton className="h-3 w-9/12" /><Skeleton className="h-3 w-10/12" /></div>
-              </Card>
+              {draft.searchQuery && (
+                <p className="ml-auto w-fit max-w-[85%] text-right text-xs text-subtle">
+                  Searched for: <span className="text-muted">{draft.searchQuery}</span>
+                </p>
+              )}
+              {draft.text ? (
+                <Card className="p-5">
+                  <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-subtle">
+                    {user.active_provider && <ProviderMark id={user.active_provider} className="size-5 text-[8px]" />}
+                    <span className="font-mono">{user.active_model}</span>
+                    <span>·</span>
+                    <span className="capitalize">{ask.variables?.mode}</span>
+                    {pendingHere && (
+                      <span className="ml-auto inline-flex items-center gap-1.5 text-accent">
+                        <span className="size-1.5 animate-pulse rounded-full bg-accent" /> Writing…
+                      </span>
+                    )}
+                  </div>
+                  <Markdown repoUrl={repo.url}>{draft.text}</Markdown>
+                  {!pendingHere && <p className="mt-3 text-xs text-subtle">This answer stopped early, so it wasn't saved.</p>}
+                </Card>
+              ) : pendingHere && (
+                <Card className="p-5">
+                  <div className="flex items-center gap-2 text-xs text-muted">
+                    <span className="flex gap-1">
+                      {[0, 1, 2].map((i) => <span key={i} className="size-1.5 animate-bounce rounded-full bg-accent" style={{ animationDelay: `${i * 120}ms` }} />)}
+                    </span>
+                    {draft.found
+                      ? <>Found the relevant commits. Waiting for <span className="font-mono">{user.active_model}</span>…</>
+                      : "Searching this repository's history…"}
+                  </div>
+                  <div className="mt-4 space-y-2"><Skeleton className="h-3 w-11/12" /><Skeleton className="h-3 w-9/12" /><Skeleton className="h-3 w-10/12" /></div>
+                </Card>
+              )}
             </div>
           )}
         </div>
 
-        {ask.error && ask.variables?.chat === chatId && <ErrorNotice error={ask.error} className="mt-4" />}
+        {askError && askedHere && <ErrorNotice error={askError} className="mt-4" />}
         <div ref={bottom} />
 
         <div className="sticky bottom-0 mt-8 bg-gradient-to-t from-bg via-bg to-transparent pt-6 pb-4">
@@ -292,10 +358,17 @@ export function Ask({ repo }: { repo: Repo }) {
                 Only commits with PRs
               </label>
               <div className="flex-1" />
-              <Button size="icon" className="size-8" onClick={() => submit()} loading={ask.isPending}
-                      disabled={!hasModel || question.trim().length < 3} aria-label="Ask">
-                {!ask.isPending && <ArrowUp className="size-4" />}
-              </Button>
+              {ask.isPending ? (
+                <Button size="icon" variant="secondary" className="size-8" onClick={() => stopper.current?.abort()}
+                        aria-label="Stop the answer" title="Stop">
+                  <Square className="size-3 fill-current" />
+                </Button>
+              ) : (
+                <Button size="icon" className="size-8" onClick={() => submit()}
+                        disabled={!hasModel || question.trim().length < 3} aria-label="Ask">
+                  <ArrowUp className="size-4" />
+                </Button>
+              )}
             </div>
           </Card>
           <p className="mt-2 flex items-center justify-center gap-1.5 text-[11px] text-subtle">

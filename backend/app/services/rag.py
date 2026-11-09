@@ -113,8 +113,13 @@ def _source(chunk: dict) -> dict:
     }
 
 
-def ask(question: str, namespace: str, generate: Generate, mode: str = "detailed",
-        only_pr: bool = False, top_k: int = 8, history: History | None = None) -> dict:
+NO_COMMITS = "No relevant commits were found for this question."
+
+
+def prepare(question: str, namespace: str, generate: Generate, mode: str = "detailed",
+            only_pr: bool = False, top_k: int = 8, history: History | None = None) -> dict:
+    """Everything before the model writes the answer: rewrite a follow-up, search, build the prompt.
+    `prompt` is None when nothing relevant was found, so there's nothing to ask the model."""
     history = (history or [])[-HISTORY_TURNS:]
     # Follow-ups are searched as standalone questions; the first question in a chat is used as-is
     query = standalone_question(question, history, generate)
@@ -125,12 +130,15 @@ def ask(question: str, namespace: str, generate: Generate, mode: str = "detailed
     else:
         chunks, per_chunk = store.search(query, top_k=top_k,
                                          filters={"has_pr": True} if only_pr else None), 2500
+    return {"search_query": query, "sources": [_source(c) for c in chunks],
+            "prompt": build_prompt(question, chunks, mode, per_chunk, history, query) if chunks else None}
 
-    if not chunks:
-        return {"answer": "No relevant commits were found for this question.", "sources": [], "search_query": query}
 
-    answer = generate(SYSTEM_PROMPT, build_prompt(question, chunks, mode, per_chunk, history, query))
-    return {"answer": answer, "sources": [_source(c) for c in chunks], "search_query": query}
+def ask(question: str, namespace: str, generate: Generate, mode: str = "detailed",
+        only_pr: bool = False, top_k: int = 8, history: History | None = None) -> dict:
+    p = prepare(question, namespace, generate, mode, only_pr, top_k, history)
+    answer = generate(SYSTEM_PROMPT, p["prompt"]) if p["prompt"] else NO_COMMITS
+    return {"answer": answer, "sources": p["sources"], "search_query": p["search_query"]}
 
 
 def timeline(filename: str, chunks: list[dict], generate: Generate, match: str = "contains") -> dict:

@@ -1,6 +1,6 @@
 import type {
   AskMode, AuthConfig, Author, Chat, CoChange, Commit, GitHubRepo, GitHubStatus, HotFile, Me, Model,
-  OriginsResult, Overview, Provider, ProviderId, PullRequest, QueryResult, Repo, RepoFile, SuspectsResult,
+  OriginsResult, Overview, Provider, ProviderId, PullRequest, QueryResult, Repo, RepoFile, Source, SuspectsResult,
   TimelineMatch, TimelineResult,
 } from "./types";
 
@@ -40,6 +40,71 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new ApiError(res.status, detailMessage(data) ?? `Request failed (${res.status})`);
   return data as T;
+}
+
+export interface AskStreamHandlers {
+  // What the search found, before the model starts writing
+  onSources?: (found: { sources: Source[]; search_query: string | null }) => void;
+  // Each new piece of the answer
+  onText?: (text: string) => void;
+}
+
+/** Ask a question and receive the answer as server-sent events while the model writes it.
+ *  Resolves with the saved exchange; rejects with ApiError, or with an AbortError if `signal` aborts. */
+async function askStream(repoId: string, body: object, handlers: AskStreamHandlers,
+                         signal?: AbortSignal): Promise<QueryResult> {
+  let res: Response;
+  try {
+    res = await fetch(`/api/repos/${repoId}/ask/stream`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (e) {
+    if (signal?.aborted) throw e;
+    throw new ApiError(0, "Can't reach the server. Check your connection and try again.");
+  }
+  // Setup problems (no model, bad key, unknown chat) come back as ordinary JSON errors
+  if (!res.ok || !res.body) {
+    const data = await res.json().catch(() => null);
+    throw new ApiError(res.status, detailMessage(data) ?? `Request failed (${res.status})`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    let chunk: ReadableStreamReadResult<Uint8Array>;
+    try {
+      chunk = await reader.read();
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      throw new ApiError(0, "The connection dropped before the answer finished. Try again.");
+    }
+    if (chunk.done) break;
+    buffer += decoder.decode(chunk.value, { stream: true }).replace(/\r\n/g, "\n");
+    // Events are separated by a blank line: "event: name\ndata: {json}\n\n"
+    let end: number;
+    while ((end = buffer.indexOf("\n\n")) !== -1) {
+      const block = buffer.slice(0, end);
+      buffer = buffer.slice(end + 2);
+      let name = "message";
+      let data = "";
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event:")) name = line.slice(6).trim();
+        else if (line.startsWith("data:")) data += line.slice(5).trim();
+      }
+      if (!data) continue;
+      const payload = JSON.parse(data);
+      if (name === "sources") handlers.onSources?.(payload);
+      else if (name === "delta") handlers.onText?.(payload.text);
+      else if (name === "done") return payload as QueryResult;
+      else if (name === "error") throw new ApiError(502, payload.message);
+    }
+  }
+  throw new ApiError(0, "The answer stopped before it finished. Try again.");
 }
 
 const get = <T,>(p: string) => request<T>("GET", p);
@@ -98,8 +163,9 @@ export const api = {
   chat: (id: string, chatId: number) => get<QueryResult[]>(`/repos/${id}/chats/${chatId}`),
   deleteChat: (id: string, chatId: number) => del(`/repos/${id}/chats/${chatId}`),
   // chatId null starts a new chat; the answer says which chat it landed in
-  ask: (id: string, question: string, mode: AskMode, onlyPr: boolean, chatId: number | null) =>
-    post<QueryResult>(`/repos/${id}/ask`, { question, mode, only_pr: onlyPr, conversation_id: chatId }),
+  ask: (id: string, question: string, mode: AskMode, onlyPr: boolean, chatId: number | null,
+        handlers: AskStreamHandlers = {}, signal?: AbortSignal) =>
+    askStream(id, { question, mode, only_pr: onlyPr, conversation_id: chatId }, handlers, signal),
   suspects: (id: string, description: string, since: string | null) =>
     post<SuspectsResult>(`/repos/${id}/suspects`, { description, since }),
   timeline: (id: string, path: string, match: TimelineMatch) =>

@@ -1,5 +1,7 @@
 # app/llm/openai_compatible.py
 """Groq and OpenRouter — both officially support the OpenAI SDK via base_url."""
+from collections.abc import Iterator
+
 import httpx
 import openai
 
@@ -14,6 +16,30 @@ def _message(e: openai.APIStatusError) -> str:
     body = e.body if isinstance(e.body, dict) else {}
     err = body.get("error", body)
     return (err.get("message") if isinstance(err, dict) else None) or e.message
+
+
+def _chat(client: openai.OpenAI, name: str, model: ModelInfo, args: dict) -> str:
+    try:
+        resp = client.chat.completions.create(**args)
+    except openai.APIStatusError as e:
+        raise ProviderError(kind_from_status(e.status_code), _message(e)) from e
+    except openai.APIConnectionError as e:
+        raise ProviderError("unavailable", f"Couldn't reach the {name} API.") from e
+    return require_text(resp.choices[0].message.content if resp.choices else None, model)
+
+
+def _chat_stream(client: openai.OpenAI, name: str, args: dict) -> Iterator[str]:
+    try:
+        with client.chat.completions.create(stream=True, **args) as chunks:
+            for chunk in chunks:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+    except openai.APIStatusError as e:
+        raise ProviderError(kind_from_status(e.status_code), _message(e)) from e
+    except openai.APIConnectionError as e:
+        raise ProviderError("unavailable", f"Couldn't reach the {name} API.") from e
+    except openai.APIError as e:   # e.g. OpenRouter's upstream provider failing mid-answer
+        raise ProviderError("unavailable", e.message or f"{name} stopped the answer with an error.") from e
 
 
 class GroqProvider:
@@ -51,20 +77,16 @@ class GroqProvider:
                                  description=f"by {m.owned_by}" if m.owned_by else None))
         return sorted(out, key=lambda m: m.id)
 
+    def _args(self, model: ModelInfo, system: str, prompt: str) -> dict:
+        return {"model": model.id,
+                "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+                "max_completion_tokens": max_output_for(model), "temperature": GROUNDED_TEMPERATURE}
+
     def generate(self, api_key: str, model: ModelInfo, system: str, prompt: str) -> str:
-        try:
-            resp = self._client(api_key).chat.completions.create(
-                model=model.id,
-                messages=[{"role": "system", "content": system},
-                          {"role": "user", "content": prompt}],
-                max_completion_tokens=max_output_for(model),
-                temperature=GROUNDED_TEMPERATURE,
-            )
-        except openai.APIStatusError as e:
-            raise ProviderError(kind_from_status(e.status_code), _message(e)) from e
-        except openai.APIConnectionError as e:
-            raise ProviderError("unavailable", "Couldn't reach the Groq API.") from e
-        return require_text(resp.choices[0].message.content if resp.choices else None, model)
+        return _chat(self._client(api_key), self.name, model, self._args(model, system, prompt))
+
+    def stream(self, api_key: str, model: ModelInfo, system: str, prompt: str) -> Iterator[str]:
+        return _chat_stream(self._client(api_key), self.name, self._args(model, system, prompt))
 
 
 class OpenRouterProvider:
@@ -126,24 +148,19 @@ class OpenRouterProvider:
             ))
         return out
 
-    def generate(self, api_key: str, model: ModelInfo, system: str, prompt: str) -> str:
-        kwargs = {}
+    def _args(self, model: ModelInfo, system: str, prompt: str) -> dict:
+        args = {"model": model.id,
+                "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+                "max_tokens": max_output_for(model), "extra_headers": self._attribution()}
         if "temperature" in model.extra.get("supported_parameters", []):
-            kwargs["temperature"] = GROUNDED_TEMPERATURE
-        try:
-            resp = self._client(api_key).chat.completions.create(
-                model=model.id,
-                messages=[{"role": "system", "content": system},
-                          {"role": "user", "content": prompt}],
-                max_tokens=max_output_for(model),
-                extra_headers=self._attribution(),
-                **kwargs,
-            )
-        except openai.APIStatusError as e:
-            raise ProviderError(kind_from_status(e.status_code), _message(e)) from e
-        except openai.APIConnectionError as e:
-            raise ProviderError("unavailable", "Couldn't reach the OpenRouter API.") from e
-        return require_text(resp.choices[0].message.content if resp.choices else None, model)
+            args["temperature"] = GROUNDED_TEMPERATURE
+        return args
+
+    def generate(self, api_key: str, model: ModelInfo, system: str, prompt: str) -> str:
+        return _chat(self._client(api_key), self.name, model, self._args(model, system, prompt))
+
+    def stream(self, api_key: str, model: ModelInfo, system: str, prompt: str) -> Iterator[str]:
+        return _chat_stream(self._client(api_key), self.name, self._args(model, system, prompt))
 
 
 def _http_message(resp: httpx.Response, fallback: str) -> str:

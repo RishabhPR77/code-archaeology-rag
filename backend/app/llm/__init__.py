@@ -2,9 +2,10 @@
 import hashlib
 import threading
 import time
+from collections.abc import Iterator
 
 from app.llm.anthropic_provider import AnthropicProvider
-from app.llm.base import LLMProvider, ModelInfo, ProviderError
+from app.llm.base import LLMProvider, ModelInfo, ProviderError, require_text
 from app.llm.gemini_provider import GeminiProvider
 from app.llm.openai_compatible import GroqProvider, OpenRouterProvider
 from app.llm.openai_provider import OpenAIProvider
@@ -51,3 +52,18 @@ def find_model(provider_id: str, api_key: str, model_id: str) -> ModelInfo:
 def generate(provider_id: str, api_key: str, model_id: str, system: str, prompt: str) -> str:
     model = find_model(provider_id, api_key, model_id)
     return get_provider(provider_id).generate(api_key, model, system, prompt)
+
+
+def stream(provider_id: str, model: ModelInfo, api_key: str, system: str, prompt: str) -> Iterator[str]:
+    """The answer in pieces as the model writes it. Look the model up first with find_model, so a bad
+    key or a retired model fails before anything is sent; a ProviderError can still come mid-answer."""
+    provider = get_provider(provider_id)
+    pieces = (provider.stream(api_key, model, system, prompt) if hasattr(provider, "stream")
+              else iter([provider.generate(api_key, model, system, prompt)]))
+    wrote = False
+    for piece in pieces:
+        if piece:
+            wrote = True
+            yield piece
+    if not wrote:
+        require_text(None, model)   # raises the usual "returned no text" error

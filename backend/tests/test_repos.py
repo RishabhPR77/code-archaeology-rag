@@ -354,3 +354,69 @@ def test_suspects_validate_input_and_filter_by_date(user_client):
                             json={"description": "Login breaks in src/auth.py", "since": "2026-01-20"}).json()
     assert [s["sha"] for s in late["suspects"]] == ["c3d4e5f"]          # the only commit after Jan 20
 
+
+
+# ── Streaming answers ─────────────────────────────────────────────
+def _events(response) -> list[tuple[str, dict]]:
+    """Server-sent events as (name, data) pairs."""
+    import json
+    out = []
+    for block in response.text.split("\n\n"):
+        lines = dict(line.split(": ", 1) for line in block.splitlines() if ": " in line)
+        if "event" in lines:
+            out.append((lines["event"], json.loads(lines["data"])))
+    return out
+
+
+def test_answers_stream_and_only_complete_answers_are_saved(user_client):
+    rid = _ready_repo(user_client)["id"]
+    _connect_model(user_client)
+
+    r = user_client.post(f"/api/repos/{rid}/ask/stream", json={"question": "why was oauth login added?"})
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
+    events = _events(r)
+    names = [name for name, _ in events]
+    assert names[0] == "sources" and names[-1] == "done" and set(names[1:-1]) == {"delta"}
+    sources = events[0][1]
+    assert sources["sources"] and sources["search_query"] is None   # a first question isn't rewritten
+    text = "".join(data["text"] for name, data in events if name == "delta")
+    assert text == "Answer from claude-test-1: see `abc1234`." and names.count("delta") == 3
+
+    done = events[-1][1]
+    assert done["answer"] == text and done["provider"] == "anthropic" and done["model"] == "claude-test-1"
+    assert done["sources"] == sources["sources"]
+    saved = user_client.get(f"/api/repos/{rid}/chats/{done['conversation_id']}").json()
+    assert [m["id"] for m in saved] == [done["id"]] and saved[0]["answer"] == text
+
+    # A follow-up in the same chat is rewritten before searching, like /ask
+    follow = _events(user_client.post(f"/api/repos/{rid}/ask/stream", json={
+        "question": "who reviewed it?", "conversation_id": done["conversation_id"]}))
+    assert follow[0][1]["search_query"] == "Standalone: who reviewed it?"
+    assert follow[-1][1]["conversation_id"] == done["conversation_id"]
+    assert len(user_client.get(f"/api/repos/{rid}/chats").json()) == 1
+
+
+def test_a_stream_that_fails_midway_reports_it_and_saves_nothing(user_client, monkeypatch):
+    from app.llm import ProviderError
+    from tests.conftest import FakeProvider
+    rid = _ready_repo(user_client)["id"]
+    _connect_model(user_client)
+
+    def breaks(self, api_key, model, system, prompt):
+        yield "The change was "
+        raise ProviderError("rate_limit", "Rate limit reached, try again in a minute")
+    monkeypatch.setattr(FakeProvider, "stream", breaks)
+
+    events = _events(user_client.post(f"/api/repos/{rid}/ask/stream", json={"question": "why was oauth login added?"}))
+    assert [name for name, _ in events] == ["sources", "delta", "error"]
+    assert events[-1][1] == {"message": "Rate limit reached, try again in a minute"}
+    assert user_client.get(f"/api/repos/{rid}/chats").json() == []
+
+
+def test_stream_setup_problems_are_normal_errors(user_client):
+    rid = _ready_repo(user_client)["id"]
+    r = user_client.post(f"/api/repos/{rid}/ask/stream", json={"question": "why was oauth login added?"})
+    assert r.status_code == 409 and "Connect a model provider" in r.json()["detail"]
+    _connect_model(user_client)
+    r = user_client.post(f"/api/repos/{rid}/ask/stream", json={"question": "why?!", "conversation_id": 999})
+    assert r.status_code == 404

@@ -5,6 +5,8 @@ Docs: https://platform.claude.com/docs/en/api/models/list
 - The Models API reports lifecycle, display_name, max_input_tokens and max_tokens.
 - No temperature: several current models always think, so effort/defaults govern output.
 """
+from collections.abc import Iterator
+
 import anthropic
 
 from app.llm.base import (REQUEST_TIMEOUT, ModelInfo, ProviderError, kind_from_status,
@@ -48,6 +50,22 @@ class AnthropicProvider:
             raise ProviderError("unavailable", "Couldn't reach the Anthropic API.") from e
         text = "".join(b.text for b in resp.content if b.type == "text")
         return require_text(text, model)
+
+    def stream(self, api_key: str, model: ModelInfo, system: str, prompt: str) -> Iterator[str]:
+        try:
+            with self._client(api_key).messages.stream(
+                model=model.id,
+                max_tokens=max_output_for(model),
+                system=system,
+                messages=[{"role": "user", "content": prompt}],
+            ) as s:
+                yield from s.text_stream   # text only; thinking blocks aren't part of it
+        except anthropic.APIStatusError as e:
+            raise ProviderError(kind_from_status(e.status_code), _message(e)) from e
+        except anthropic.APIConnectionError as e:
+            raise ProviderError("unavailable", "Couldn't reach the Anthropic API.") from e
+        except anthropic.APIError as e:   # an error event in the middle of the stream
+            raise ProviderError("unavailable", e.message or "Anthropic stopped the answer with an error.") from e
 
 
 def _message(e: anthropic.APIStatusError) -> str:
