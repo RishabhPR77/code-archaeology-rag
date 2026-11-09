@@ -32,9 +32,17 @@ SEARCH_POOL = 200
 # The two rankings are merged by position (reciprocal rank fusion), not by raw score: cosine
 # scores bunch together while keyword scores spread out, so mixing scores let keywords decide.
 RRF_K = 60
-# A keyword match counts 3x a meaning match: best of 1-10 on click and flask, and it also won on httpx,
-# which wasn't used to choose it (evals/run_eval.py compares several values)
-KEYWORD_WEIGHT = 3.0
+# How much a keyword match counts against a meaning match. The best value depends on the embeddings
+# (evals/run_eval.py compares several): the local BGE-small reads only ~512 tokens of a commit, so keywords
+# need 3x the say (best of 1-10 on click and flask, confirmed on httpx); Pinecone's llama-text-embed-v2
+# reads ~2,048, and with it equal weight did best (run_eval --hosted).
+LOCAL_KEYWORD_WEIGHT = 3.0
+HOSTED_KEYWORD_WEIGHT = 1.0
+
+
+def default_keyword_weight() -> float:
+    """The keyword weight for the embedding model in use."""
+    return HOSTED_KEYWORD_WEIGHT if _hosted() else LOCAL_KEYWORD_WEIGHT
 
 STOPWORDS = frozenset("""
 a about after again all also an and any are as at be because been before being between both but by
@@ -70,7 +78,7 @@ def _commit_tokens(text: str) -> tuple[str, ...]:
     return tuple(sys.intern(t) for t in keyword_tokens(text))
 
 
-def fuse(count: int, keyword_scores: list[float], keyword_weight: float = KEYWORD_WEIGHT) -> list[tuple[float, int]]:
+def fuse(count: int, keyword_scores: list[float], keyword_weight: float) -> list[tuple[float, int]]:
     """Merge the meaning ranking (positions 0..count-1, best first) with the keyword ranking.
 
     Each ranking adds 1 / (RRF_K + position) for every result it holds; a result with no keyword
@@ -311,7 +319,7 @@ class VectorStore:
 
     # Hybrid search: meaning (dense vectors) and keywords (BM25), merged by rank
     def search(self, question: str, top_k: int = 5, filters: dict = None,
-               keyword_weight: float = KEYWORD_WEIGHT, chunks: list[dict] | None = None) -> list[dict]:
+               keyword_weight: float | None = None, chunks: list[dict] | None = None) -> list[dict]:
         """
         1. Fetch up to SEARCH_POOL commits by meaning, best first
         2. Score the same commits by keywords (BM25 over keyword_tokens)
@@ -320,8 +328,10 @@ class VectorStore:
 
         `chunks` is the repository's commits as saved in the database. With them, the index only returns
         commit IDs and scores and the text comes from the chunks, which is the same text, without
-        downloading it from Pinecone on every question.
+        downloading it from Pinecone on every question. `keyword_weight` defaults to default_keyword_weight().
         """
+        if keyword_weight is None:
+            keyword_weight = default_keyword_weight()
         vector, pool = _embed_query(question), max(top_k, SEARCH_POOL)
         if chunks is None:
             candidates = self.backend.query(vector, pool, self.namespace, filters)

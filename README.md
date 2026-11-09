@@ -113,7 +113,7 @@ flowchart LR
 **Answering:**
 
 1. **Follow-ups.** In a chat with earlier messages, the model first rewrites the question into a standalone one (“who reviewed it?” becomes “who reviewed the OAuth login change in a1b2c3d?”). That is what gets searched, and the answer prompt includes the last three exchanges as context. The UI shows what was searched.
-2. **Hybrid retrieval.** Up to 200 commits are fetched by meaning (dense vectors). Pinecone returns only their IDs and scores; the text comes from the copy of each commit already saved in Postgres, which saves downloading about half a megabyte per question. The same commits are also scored by keywords (BM25, with code split into words, so `ctx.ensure_object()` matches "ensure object"). The two rankings are merged by position with reciprocal rank fusion, so neither side's score scale can drown out the other, and a keyword match counts three times a meaning match. Exact identifiers such as function names and file paths are found as reliably as concepts; the [accuracy check](#accuracy) measures how well it works.
+2. **Hybrid retrieval.** Up to 200 commits are fetched by meaning (dense vectors). Pinecone returns only their IDs and scores; the text comes from the copy of each commit already saved in Postgres, which saves downloading about half a megabyte per question. The same commits are also scored by keywords (BM25, with code split into words, so `ctx.ensure_object()` matches "ensure object"). The two rankings are merged by position with reciprocal rank fusion, so neither side's score scale can drown out the other. Keywords get the weight that measured best for the embedding model: on the live site, with Pinecone's model, a keyword match counts the same as a meaning match; with the weaker local model it counts three times as much. Exact identifiers such as function names and file paths are found as reliably as concepts; the [accuracy check](#accuracy) measures how well it works.
 3. **Grounded prompt.** The model must answer only from the retrieved commits, cite SHAs and say when the evidence is insufficient.
 4. **Generation.** The user's active provider and model write the answer, which streams to the browser as server-sent events: first the commits that were found, then the answer piece by piece. All five providers stream through their official SDKs. It is rendered as Markdown with no raw HTML allowed, and a complete answer is saved to the chat. If you press Stop, the text written so far is saved too, marked as stopped; an answer that fails halfway is not saved.
 
@@ -345,7 +345,7 @@ cd backend
 python -m pytest
 ```
 
-There are 134 tests. GitHub Actions runs them, plus the frontend type-check and build, on every push to `main` and every pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests replace the embedding model with a small stand-in, so CI installs only `requirements.txt`, without torch.
+There are 135 tests. GitHub Actions runs them, plus the frontend type-check and build, on every push to `main` and every pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests replace the embedding model with a small stand-in, so CI installs only `requirements.txt`, without torch.
 
 - **Auth:** sessions, cookie flags, rate limiting and admin handling.
 - **Accounts:** email codes (hashing, expiry, attempt and resend limits), GitHub App sign-in, linking and token refresh, Google sign-in, pre-hijack protection, private-repo cloning, the Brevo request format and the startup check of the Brevo sender. All HTTP is mocked.
@@ -384,7 +384,7 @@ Latest run: the last 200 commits of `pallets/click`, `pallets/flask` and `encode
 What it shows:
 
 - **What was wrong.** Search used to add 0.6 × the dense score to 0.4 × the keyword score. Dense scores among the candidates bunch together (a spread of about 0.08), while keyword scores divided by the best one spread across almost the whole 0 to 1 range, so in practice keywords decided the order. Words were also split on spaces, so `echo()` never matched "echo". The result was worse than dense search alone.
-- **The fix.** Rank fusion merges the two rankings by position, keywords are matched over every commit instead of only the top 32 by meaning, code is split into words, and a keyword match counts three times a meaning match. It beats the old search for both question types in every repository, and beats dense search alone on every measure.
+- **The fix.** Rank fusion merges the two rankings by position, keywords are matched over every commit instead of only the top 32 by meaning, code is split into words, and (with this local model) a keyword match counts three times a meaning match. It beats the old search for both question types in every repository, and beats dense search alone on every measure.
 - **How the weight was chosen.** Weights from 1 to 10 were tried on click and flask, and 3 did best. On httpx, which wasn't used to choose it, weight 3 also beat weight 1 (the right commit in the top 8 for 76% of description questions instead of 70%), so the gain isn't luck. Stemming and giving the commit message extra weight were tried too and made no reliable difference, so they were left out.
 - **The absolute numbers are pessimistic.** The PR text is removed from the index, and the local model reads only about 512 tokens of each commit. The comparisons between searches are the reliable part.
 
@@ -393,11 +393,11 @@ What it shows:
 | Search, live model | Right commit first | In the top 3 | In the top 8 | MRR |
 |---|---:|---:|---:|---:|
 | PR description questions, before | 40% | 50% | 65% | 0.47 |
-| PR description questions, now (keyword weight 3) | **51%** | **71%** | **81%** | **0.62** |
+| PR description questions, now (keyword weight 1) | **54%** | **71%** | **81%** | **0.64** |
 | PR title questions, before | 46% | 64% | 79% | 0.56 |
-| PR title questions, now (keyword weight 3) | **55%** | **74%** | **87%** | **0.66** |
+| PR title questions, now (keyword weight 1) | **59%** | **79%** | **89%** | **0.70** |
 
-The live site does better than the local check suggested: the right commit is among the 8 sources for 81–87% of questions. The stronger model also shifts the best keyword weight: with it, dense search alone is much better than with the local model, and a keyword weight of 1 did slightly better than 3 (81% / 89% in the top 8, MRR 0.64 / 0.70).
+The live site does better than the local check suggested: the right commit is among the 8 sources for 81–89% of questions. The stronger model also shifts the best keyword weight: with it, dense search alone is much better than with the local model, and a keyword weight of 1 beat 3 on every measure (3 gave 81% / 87% in the top 8, MRR 0.62 / 0.66). So the weight now follows the model: 1 with Pinecone's embeddings, 3 with the local ones.
 
 ### Who broke it? on real bug reports
 
@@ -435,8 +435,7 @@ On the number that matters most, search went from weak (55% in the top 8) to goo
 Next steps toward very good:
 
 1. **Rerank the top results** with a model that reads the question and each commit together (a cross-encoder). Pinecone hosts one (`bge-reranker-v2-m3`), but its free plan allows about 500 rerank requests a month, so search would need to fall back when they run out.
-2. **Use a keyword weight of 1 with the live model.** The local check chose 3, but with Pinecone's stronger model, 1 did slightly better on every measure.
-3. **Help Who broke it? with the stronger model and a reranker too.** Its description match uses the same search, so both should lift it.
+2. **Help Who broke it? with the stronger model and a reranker too.** Its description match uses the same search, so both should lift it.
 
 Run it yourself (needs `requirements-local.txt` for the embedding model; about 20 minutes the first time and 10 after that, and it never touches Pinecone, the database or `GITHUB_TOKEN`):
 

@@ -1,5 +1,6 @@
 import pytest
 
+from storage import vector_store
 from storage.vector_store import RRF_K, VectorStore, fuse, keyword_tokens
 
 
@@ -16,15 +17,23 @@ def test_fuse_merges_rankings_by_position():
     ranked = fuse(3, [0.0, 0.0, 5.0], keyword_weight=1)
     assert [i for _, i in ranked] == [2, 0, 1]
     assert ranked[0][0] == pytest.approx((1 / (RRF_K + 3) + 1 / (RRF_K + 1)) / (2 / (RRF_K + 1)))
-    # The app weighs a keyword match 3x, so a keyword hit outranks the best meaning-only result
-    ranked = fuse(3, [0.0, 0.0, 5.0])
+    # Weighted 3x, a keyword hit outranks the best meaning-only result by more
+    ranked = fuse(3, [0.0, 0.0, 5.0], keyword_weight=3)
     assert [i for _, i in ranked] == [2, 0, 1]
     assert ranked[0][0] == pytest.approx((1 / (RRF_K + 3) + 3 / (RRF_K + 1)) / (4 / (RRF_K + 1)))
     # First in both rankings scores exactly 1
-    assert fuse(2, [9.0, 1.0])[0] == (pytest.approx(1.0), 0)
+    assert fuse(2, [9.0, 1.0], keyword_weight=3)[0] == (pytest.approx(1.0), 0)
     # Without keywords the meaning order stands, ties included
-    assert [i for _, i in fuse(3, [0.0, 0.0, 0.0])] == [0, 1, 2]
+    assert [i for _, i in fuse(3, [0.0, 0.0, 0.0], keyword_weight=1)] == [0, 1, 2]
     assert [i for _, i in fuse(3, [0.0, 0.0, 5.0], keyword_weight=0)] == [0, 1, 2]
+
+
+def test_keyword_weight_follows_the_embedding_model(monkeypatch):
+    # Measured by evals/run_eval.py: the weaker local model needs keywords to count more
+    monkeypatch.setattr(vector_store, "_hosted", lambda: False)
+    assert vector_store.default_keyword_weight() == 3
+    monkeypatch.setattr(vector_store, "_hosted", lambda: True)
+    assert vector_store.default_keyword_weight() == 1
 
 
 def _chunk(sha, text):

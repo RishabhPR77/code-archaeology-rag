@@ -65,8 +65,9 @@ from storage.vector_store import VectorStore  # noqa: E402
 
 BACKEND = Path(__file__).resolve().parents[1]
 DEFAULT_REPOS = ["pallets/click", "pallets/flask", "encode/httpx"]
-# Keyword side of rank fusion; the app uses vector_store.KEYWORD_WEIGHT
-FUSION_WEIGHTS = sorted({1.0, 2.0, 3.0, 4.0, vector_store.KEYWORD_WEIGHT})
+# Keyword side of rank fusion; the app uses default_keyword_weight() for the model being checked
+APP_WEIGHT = vector_store.default_keyword_weight()
+FUSION_WEIGHTS = sorted({1.0, 2.0, 3.0, 4.0, APP_WEIGHT})
 WEIGHT_SETS = {
     "App (search 0.5, files 0.3, risk 0.2)": WEIGHTS,
     "Search only": {"search": 1.0, "files": 0.0, "risk": 0.0},
@@ -155,11 +156,11 @@ def _old_search(store: VectorStore, question: str, top_k: int, chunks: list[dict
 
 
 OLD_SEARCH = "Before: score mix (0.6 dense + 0.4 keywords)"
-APP_SEARCH = f"Rank fusion, keyword weight {vector_store.KEYWORD_WEIGHT:g} (the app)"
+APP_SEARCH = f"Rank fusion, keyword weight {APP_WEIGHT:g} (the app)"
 SEARCHES = {
     OLD_SEARCH: _old_search,
     "Dense only": lambda store, q, k, chunks: store.search(q, top_k=k, keyword_weight=0, chunks=chunks),
-    **{(APP_SEARCH if w == vector_store.KEYWORD_WEIGHT else f"Rank fusion, keyword weight {w:g}"):
+    **{(APP_SEARCH if w == APP_WEIGHT else f"Rank fusion, keyword weight {w:g}"):
        (lambda store, q, k, chunks, w=w: store.search(q, top_k=k, keyword_weight=w, chunks=chunks))
        for w in FUSION_WEIGHTS},
 }

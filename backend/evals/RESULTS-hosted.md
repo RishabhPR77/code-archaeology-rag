@@ -1,5 +1,7 @@
 # Accuracy check with the live site's embedding model
 
+Since this run, the live site uses keyword weight 1, the best rank-fusion row below; it was weight 3 at the time, which is why that row is marked as the app.
+
 Run on 2026-11-09 with `python -m evals.run_eval --hosted` (Pinecone's hosted llama-text-embed-v2, the live site's model, in a throwaway index; search only, the last 200 commits of each repository, 13 minutes).
 
 | Repository | Commits | Linked PRs | Title questions | Description questions | Traced bugs |
