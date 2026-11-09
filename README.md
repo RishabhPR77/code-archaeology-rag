@@ -1,5 +1,7 @@
 # Code Archaeologist
 
+[![CI](https://github.com/RishabhPR77/code-archaeology-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/RishabhPR77/code-archaeology-rag/actions/workflows/ci.yml)
+
 **Ask why any code was written, and get a grounded, cited answer from the repository's own history.**
 
 Code Archaeologist turns a GitHub repository's commits, diffs, pull requests and code reviews into a searchable memory. Ask a question in plain English and it retrieves the commits that matter, then has a large language model answer **only from that evidence**, citing the commits it used.
