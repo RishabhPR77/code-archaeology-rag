@@ -29,7 +29,7 @@ GOOGLE_USERINFO = "https://openidconnect.googleapis.com/v1/userinfo"
 
 
 def _start_session(response: Response, user: User):
-    response.set_cookie(value=create_session_token(user.id), **session_cookie_kwargs())
+    response.set_cookie(value=create_session_token(user.id, user.session_version or 0), **session_cookie_kwargs())
 
 
 def _me(db: Session, user: User) -> MeOut:
@@ -38,8 +38,9 @@ def _me(db: Session, user: User) -> MeOut:
 
 def _session_user(request: Request, db: Session) -> User | None:
     token = request.cookies.get(SESSION_COOKIE)
-    user_id = decode_session_token(token) if token else None
-    return db.get(User, user_id) if user_id else None
+    session = decode_session_token(token) if token else None
+    user = db.get(User, session[0]) if session else None
+    return user if user is not None and session[1] == (user.session_version or 0) else None
 
 
 def _claim_unverified(user: User):
@@ -93,7 +94,7 @@ def register(body: RegisterIn, request: Request, response: Response, db: Session
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists")
+        raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists") from None
 
     if not user.email_verified:
         try:
@@ -138,6 +139,14 @@ def resend_code(user: User = Depends(current_user), db: Session = Depends(get_db
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(response: Response):
+    response.delete_cookie(SESSION_COOKIE, path="/")
+
+
+@router.post("/logout-everywhere", status_code=status.HTTP_204_NO_CONTENT)
+def logout_everywhere(response: Response, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """End every session this account has, on every device: tokens carry the old version and stop working."""
+    user.session_version = (user.session_version or 0) + 1
+    db.commit()
     response.delete_cookie(SESSION_COOKIE, path="/")
 
 

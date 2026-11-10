@@ -217,7 +217,8 @@ def _evaluate(full_name: str, commits_n: int, cache: Path, token: str | None) ->
 
 def _report(repos: list[dict], commits: int, seconds: float) -> str:
     def pooled(label: str, bugs_only: bool) -> list:
-        return [r for repo in repos for r, bug in zip(repo["ranks"][label], repo["is_bug"]) if bug or not bugs_only]
+        return [r for repo in repos
+                for r, bug in zip(repo["ranks"][label], repo["is_bug"], strict=True) if bug or not bugs_only]
 
     def table(bugs_only: bool) -> list[str]:
         return [*base._header("Ranking", K, "Cause in"),
@@ -226,7 +227,7 @@ def _report(repos: list[dict], commits: int, seconds: float) -> str:
     def per_repo(bugs_only: bool) -> list[str]:
         rows = []
         for r in repos:
-            ranks = [x for x, bug in zip(r["ranks"][APP], r["is_bug"]) if bug or not bugs_only]
+            ranks = [x for x, bug in zip(r["ranks"][APP], r["is_bug"], strict=True) if bug or not bugs_only]
             rows.append(base._row(f"{r['name']} ({len(ranks)} cases)", ranks, K))
         return [*base._header("Repository, app ranking", K, "Cause in"), *rows]
 

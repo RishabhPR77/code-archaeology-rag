@@ -27,19 +27,21 @@ def verify_password(password: str, password_hash: str | None) -> bool:
 
 
 # ── Sessions ───────────────────────────────────────────────────────
-def create_session_token(user_id: int) -> str:
+def create_session_token(user_id: int, version: int = 0) -> str:
+    """A signed token naming the user and their session version; it expires after SESSION_TTL_HOURS."""
     settings = get_settings()
     now = datetime.now(timezone.utc)
-    payload = {"sub": str(user_id), "iat": now,
+    payload = {"sub": str(user_id), "v": version, "iat": now,
                "exp": now + timedelta(hours=settings.session_ttl_hours)}
     return jwt.encode(payload, settings.secret_key, algorithm=_JWT_ALG)
 
 
-def decode_session_token(token: str) -> int | None:
+def decode_session_token(token: str) -> tuple[int, int] | None:
+    """(user id, session version) if the token is genuine and unexpired, else None."""
     try:
         payload = jwt.decode(token, get_settings().secret_key, algorithms=[_JWT_ALG])
-        return int(payload["sub"])
-    except (jwt.PyJWTError, KeyError, ValueError):
+        return int(payload["sub"]), int(payload.get("v", 0))
+    except (jwt.PyJWTError, KeyError, ValueError, TypeError):
         return None
 
 

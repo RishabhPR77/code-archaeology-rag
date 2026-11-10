@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   backend:
-    name: Backend tests
+    name: Backend lint and tests
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -28,7 +28,9 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       # requirements.txt only: the tests fake the embedding model, so torch isn't needed
-      - run: pip install -r requirements.txt pytest==9.1.1
+      - run: pip install -r requirements.txt pytest==9.1.1 ruff==0.14.4
+      # Rules in backend/ruff.toml
+      - run: ruff check .
       - run: python -m pytest -q
 
   frontend:

@@ -31,7 +31,7 @@ def test_pre_migration_database_is_upgraded_in_place():
     init_db()
     init_db()  # every later start is a no-op
     with engine.connect() as c:
-        assert c.execute(text("select version_num from alembic_version")).scalar() == "0008"
+        assert c.execute(text("select version_num from alembic_version")).scalar() == "0009"
         assert c.execute(text("select email_verified from users")).scalar() == 1   # existing users stay in
     assert "email_verifications" in inspect(engine).get_table_names()
     assert "is_private" in {col["name"] for col in inspect(engine).get_columns("repos")}
@@ -50,7 +50,7 @@ def test_hosted_postgres_urls_use_psycopg(monkeypatch, given, expected):
 
 def test_single_container_serves_spa(monkeypatch, tmp_path):
     (tmp_path / "assets").mkdir()
-    (tmp_path / "index.html").write_text("<div id=root></div>")
+    (tmp_path / "index.html").write_text('<script>window.x = 1</script><div id=root></div><script src="/assets/app.js"></script>')
     (tmp_path / "assets" / "app.js").write_text("console.log(1)")
     (tmp_path / "favicon.svg").write_text("<svg/>")
     (tmp_path.parent / "secret.txt").write_text("nope")
@@ -69,6 +69,13 @@ def test_single_container_serves_spa(monkeypatch, tmp_path):
         assert deep.status_code == 200 and "root" in deep.text
         assert deep.headers["cache-control"] == "no-cache"
         assert deep.headers["x-content-type-options"] == "nosniff"
+        assert deep.headers["x-frame-options"] == "DENY"
+        # Only the site's own scripts run: the bundle, and the inline script by the hash of its exact text
+        import base64
+        import hashlib
+        inline = base64.b64encode(hashlib.sha256(b"window.x = 1").digest()).decode()
+        csp = deep.headers["content-security-policy"]
+        assert f"script-src 'self' 'sha256-{inline}'" in csp and "frame-ancestors 'none'" in csp
         assert "nope" not in c.get("/../secret.txt").text                 # no path traversal
         assert "nope" not in c.get("/%2e%2e/secret.txt").text
 

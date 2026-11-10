@@ -1,4 +1,5 @@
-import re, time
+import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -118,7 +119,7 @@ def fetch_prs(repo_name: str, max_prs: int = 200, token: str | None = None,
                 author           = pr.user.login if pr.user else "unknown",
                 merge_commit_sha = pr.merge_commit_sha or "",
                 merged_at        = pr.merged_at.isoformat() if pr.merged_at else "",
-                labels           = [l.name for l in pr.labels],
+                labels           = [label.name for label in pr.labels],
                 linked_issues    = _extract_issues(pr.body or ""),
                 review_comments  = review_comments,
                 review_summaries = review_summaries,

@@ -1,0 +1,16 @@
+# Lint rules, run in CI: `ruff check .` from backend/
+line-length = 120
+
+[lint]
+select = ["E", "F", "W", "B"]   # pycodestyle, pyflakes and bugbear
+# FastAPI's Depends()/Query() as default arguments is the framework's intended pattern, not a bug
+ignore = ["B008"]
+
+[lint.per-file-ignores]
+# The evals define small search helpers inside a loop and call them in that same pass, so the
+# loop variables they read are always the current ones
+"evals/*" = ["B023"]
+"tests/*" = ["E731", "E501"]
+# The model's instructions and the email template are text that's sent as written; wrapping would change it
+"app/services/rag.py" = ["E501"]
+"app/services/mailer.py" = ["E501"]

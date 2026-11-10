@@ -1,6 +1,9 @@
 # app/main.py
 import asyncio
+import base64
+import hashlib
 import logging
+import re
 from contextlib import asynccontextmanager, suppress
 
 from pathlib import Path
@@ -83,6 +86,28 @@ def create_app() -> FastAPI:
     return app
 
 
+_INLINE_SCRIPT = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", re.DOTALL)
+
+
+def content_security_policy(index_html: str) -> str:
+    """Which sources the browser may load. Scripts: only this site's bundle, plus each inline script in
+    index.html allowed by the hash of its exact text, so injected script can't run."""
+    hashes = [base64.b64encode(hashlib.sha256(m.group(1).encode()).digest()).decode()
+              for m in _INLINE_SCRIPT.finditer(index_html)]
+    return "; ".join([
+        "default-src 'self'",
+        "script-src " + " ".join(["'self'", *(f"'sha256-{h}'" for h in hashes)]),
+        "style-src 'self' 'unsafe-inline'",   # React, charts and toasts set inline styles
+        "img-src 'self' data: https://github.com https://avatars.githubusercontent.com https://*.googleusercontent.com",
+        "font-src 'self' data:",
+        "connect-src 'self'",
+        "frame-ancestors 'none'",             # no other site may embed the app (clickjacking)
+        "base-uri 'self'",
+        "form-action 'self'",
+        "object-src 'none'",
+    ])
+
+
 def _serve_frontend(app: FastAPI, static_dir: Path):
     """Serve the built React app from the API itself — one origin, one port."""
     root = static_dir.resolve()
@@ -90,11 +115,19 @@ def _serve_frontend(app: FastAPI, static_dir: Path):
     if not index.is_file():
         raise RuntimeError(f"STATIC_DIR={static_dir} has no index.html — build the frontend first")
 
+    csp = content_security_policy(index.read_text(encoding="utf-8"))
+    production = get_settings().is_production
+
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
         response = await call_next(request)
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("Content-Security-Policy", csp)
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        if production:   # the live site is HTTPS only; tell browsers never to use plain HTTP for it
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
         return response
 
     # Hashed asset names, so they can be cached forever

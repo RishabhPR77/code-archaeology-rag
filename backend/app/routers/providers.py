@@ -56,7 +56,7 @@ def save_key(provider_id: str, body: SaveKeyIn,
     try:
         models = llm.list_models(provider_id, body.api_key, refresh=True)
     except ProviderError as e:
-        raise provider_http_error(e)
+        raise provider_http_error(e) from e
     if not models:
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
                             "This key works but has access to no text-generation models.")
@@ -93,7 +93,7 @@ def provider_models(provider_id: str, refresh: bool = Query(False),
     try:
         models = llm.list_models(provider_id, decrypt_secret(cred.key_enc), refresh=refresh)
     except ProviderError as e:
-        raise provider_http_error(e)
+        raise provider_http_error(e) from e
     return [ModelOut(**m.public()) for m in models]
 
 
@@ -104,7 +104,7 @@ def select_model(provider_id: str, body: SelectModelIn,
     try:
         llm.find_model(provider_id, decrypt_secret(cred.key_enc), body.model)
     except ProviderError as e:
-        raise provider_http_error(e)
+        raise provider_http_error(e) from e
     cred.model = body.model
     db.commit()
     return _provider_out(user, provider_id, cred)

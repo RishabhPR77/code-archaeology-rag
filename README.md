@@ -15,7 +15,7 @@ You bring your own model: connect an **Anthropic, OpenAI, Google Gemini, Groq or
 - **Measured search quality.** On 583 questions taken from three open-source repositories, the right commit is among the 8 the model reads for **81–89%** of them, up from 65–79% before the search was rebuilt. An automatic [accuracy check](#accuracy) found the bug that was holding it back.
 - **Answers stream in** word by word, with a **Stop** button that keeps what was written.
 - **Finds what broke.** Bug origins traces each bug fix back to the commit that introduced it, and **Who broke it?** ranks likely culprits for a new bug report. On 49 real bug reports from Flask, Click and HTTPX, the commit that caused the bug is in its top 3 for **57%**, nine times as often as checking the newest commits, and in the range of published research for the same task.
-- **Built to run for free and safely:** five LLM providers with each user's own encrypted key, GitHub and Google sign-in, 165 tests in GitHub Actions CI, deployed on Render, Neon and Pinecone.
+- **Built to run for free and safely:** five LLM providers with each user's own encrypted key, GitHub and Google sign-in, 168 tests and a linter in GitHub Actions CI, deployed on Render, Neon and Pinecone.
 
 ![Asking pallets/flask why app.query was added: it searches the history, finds the commits, and the answer streams in with citations](docs/screenshots/ask-streaming.gif)
 
@@ -23,7 +23,7 @@ You bring your own model: connect an **Anthropic, OpenAI, Google Gemini, Groq or
 
 ![The landing page, with Try the live demo and Start for free](docs/screenshots/landing.jpg)
 
-**Try the live demo** opens a sample repository (pallets/flask) with no sign-up. Further down, the landing page plays an animated walkthrough of the whole flow: connect a model, ingest a repository, ask why, explore the history.
+**Try the live demo** opens a sample repository (pallets/flask) with no sign-up. Further down, the landing page plays an animated walkthrough of the whole flow, from signing up to signing out: connect a model, ingest a repository, ask why, find what broke, explore the history.
 
 ![Animated walkthrough](docs/screenshots/walkthrough.jpg)
 
@@ -335,14 +335,15 @@ To turn on **Continue with GitHub**, **Continue with Google** or **email codes**
 ## Security
 
 - **API keys** are verified with the provider, encrypted at rest with Fernet and only ever decrypted server-side for a call. They are never returned to the browser; the UI sees a short hint such as `sk-a…9f2c`, and only for long keys.
-- **Sessions** are signed JWTs in an `httpOnly`, `SameSite=Lax` cookie (`Secure` in production). They are never readable by JavaScript.
+- **Sessions** are signed JWTs in an `httpOnly`, `SameSite=Lax` cookie (`Secure` in production). They are never readable by JavaScript. Each token carries the account's session version, so **Sign out everywhere** (Settings) ends every session on every device at once, which a plain JWT can't do.
 - **Passwords** are hashed with bcrypt. Sign-in, sign-up and code checks are rate-limited per IP.
+- **Fair use.** Searches (Ask and Who broke it?) are capped per account per hour, since each one uses the server's embedding allowance; the demo has tighter per-visitor and overall caps.
 - **OAuth** flows use `state` plus PKCE. A Google or GitHub sign-in that claims an email address whose password account was never verified removes that unverified password, which blocks account pre-hijacking.
 - **GitHub access** is a GitHub App with read-only permissions on the repositories each user picks. Tokens are encrypted at rest and refreshed before they expire.
 - **Isolation.** Every repository, vector namespace, key and saved answer belongs to one user. Other users get a `404`.
 - **Model output** is rendered as Markdown without raw HTML, so content from commits or models can't inject markup.
 - **Provider errors** never surface as `401`, so a bad API key can't be mistaken for an expired session.
-- **Responses** carry `X-Content-Type-Options: nosniff` and a strict referrer policy.
+- **Responses** carry a Content-Security-Policy that only lets the site's own scripts run (the one inline script in `index.html` is allowed by the hash of its exact text, computed at startup), `X-Frame-Options: DENY` and `frame-ancestors 'none'` against clickjacking, HSTS in production, `X-Content-Type-Options: nosniff` and a strict referrer policy.
 
 ## API
 
@@ -350,7 +351,7 @@ The interactive OpenAPI docs are available at `/api/docs` in development.
 
 | Method and path | Description |
 |---|---|
-| `POST /api/auth/register` · `/login` · `/logout` | Email and password auth |
+| `POST /api/auth/register` · `/login` · `/logout` · `/logout-everywhere` | Email and password auth; sign out here, or on every device |
 | `GET /api/auth/me` · `PATCH /api/auth/me` | Current user and usage limits; change the display name |
 | `GET /api/auth/profile` | Activity for the profile page: repositories, commits indexed, questions, chats and the latest questions |
 | `POST /api/auth/verify-email` · `POST /api/auth/resend-code` | Sign-up email code |
@@ -379,13 +380,15 @@ cd backend
 python -m pytest
 ```
 
-There are 165 tests. GitHub Actions runs them, plus the frontend type-check and build, on every push to `main` and every pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests replace the embedding model with a small stand-in, so CI installs only `requirements.txt`, without torch.
+There are 168 tests. GitHub Actions lints the backend with ruff (rules in [`backend/ruff.toml`](backend/ruff.toml)), runs the tests, and type-checks and builds the frontend, on every push to `main` and every pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests replace the embedding model with a small stand-in, so CI installs only `requirements.txt`, without torch.
 
-- **Auth:** sessions, cookie flags, rate limiting and admin handling.
+- **Auth:** sessions, cookie flags, rate limiting, admin handling, and signing out everywhere ending sessions on other devices.
 - **Commit ranges:** a range clones deep enough to reach it, reads exactly that window, keeps it on re-sync, and can't reach back further than 5,000 commits; pull requests newer than the range don't use up the pull request budget; the preview reads the commit count from GitHub's paging and stops at the oldest commit.
 - **Profile:** activity counts and the latest questions, renaming, and blank names refused.
 - **Demo:** only admins can share, and only public, ready repositories; visitors see the shared repository and its chats, every write is refused (including adding a key or deleting a chat), searches are capped per visitor, the demo account can't be signed into or claimed, and signing in with GitHub from the demo makes a real account instead of linking GitHub to the shared one.
 - **Accounts:** email codes (hashing, expiry, attempt and resend limits), GitHub App sign-in, linking and token refresh, Google sign-in, pre-hijack protection, private-repo cloning, the Brevo request format and the startup check of the Brevo sender. All HTTP is mocked.
+- **Security headers:** the website is served with a Content-Security-Policy whose script hashes match the inline scripts actually served, and with clickjacking protection.
+- **Fair use and speed:** searches are capped per account, and a repository's history is parsed once and reused until it's re-synced.
 - **Migrations:** a database created before migrations existed is stamped and upgraded in place, and questions asked before chats existed are grouped into one chat per repository.
 - **Keys:** encryption, never echoing a key back, and per-user isolation.
 - **Ingestion and analytics:** the full ingest-to-answer flow, chats (grouping, privacy, deletion), follow-up questions (rewritten with only the last three exchanges), streamed answers (event order, follow-ups, a provider failing halfway saves nothing, stopped answers are kept and never duplicated), limits, expiry cleanup and deletion of vectors.

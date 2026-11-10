@@ -79,8 +79,11 @@ def run_ingest(repo_id: str):
             tmp = tempfile.mkdtemp(prefix="ca-clone-")
             # Shallow clone: the skipped commits plus twice the window, so every ingested commit still
             # has its parent. Private repos authenticate through the environment, never the URL.
+            # A stalled transfer (under 1 KB/s for a minute) is aborted, so it can't hold the ingest slot forever
+            stall = {"GIT_HTTP_LOW_SPEED_LIMIT": "1000", "GIT_HTTP_LOW_SPEED_TIME": "60"}
             git.Repo.clone_from(url, tmp, depth=skip + max_commits * 2, single_branch=True, no_tags=True,
-                                env=github.git_auth_env(user_token) if private else {"GIT_TERMINAL_PROMPT": "0"})
+                                env={**(github.git_auth_env(user_token) if private else {"GIT_TERMINAL_PROMPT": "0"}),
+                                     **stall})
 
             _update(repo_id, status="extracting",
                     stage_message=(f"Reading commits {skip + 1:,} to {skip + max_commits:,}" if skip

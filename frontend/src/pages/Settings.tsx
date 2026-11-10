@@ -246,9 +246,18 @@ function AccountCard() {
           <GitHubConnection />
         </div>
       )}
-      <div className="border-t border-border px-5 py-4">
+      <div className="flex flex-wrap items-center gap-2 border-t border-border px-5 py-4">
         <Button variant="secondary" size="sm" onClick={async () => { await signOut(); navigate("/login"); }}>
           <LogOut className="size-3.5" /> Sign out
+        </Button>
+        <Button variant="ghost" size="sm" title="Signs this account out on every device and browser"
+                onClick={async () => {
+                  await api.logoutEverywhere().catch(() => undefined);
+                  await signOut();
+                  toast.success("Signed out on every device");
+                  navigate("/login");
+                }}>
+          Sign out everywhere
         </Button>
       </div>
     </Card>

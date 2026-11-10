@@ -36,9 +36,9 @@ def github_repos(user: User = Depends(verified_user), db: Session = Depends(get_
     try:
         return github.shared_repos(github.user_token(db, user))
     except github.GitHubNotConnected as e:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(e))
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e)) from e
     except httpx.HTTPError:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "GitHub is unreachable right now")
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "GitHub is unreachable right now") from None
 
 
 @router.delete("", status_code=status.HTTP_204_NO_CONTENT)

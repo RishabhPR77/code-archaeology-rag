@@ -1,4 +1,3 @@
-from types import SimpleNamespace
 
 import pytest
 
@@ -549,3 +548,33 @@ def test_range_preview_shows_where_a_range_starts_and_ends(user_client, monkeypa
     monkeypatch.setattr(github, "commit_total", down)
     r = user_client.get("/api/repos/range-preview", params={"url": "https://github.com/pallets/flask"})
     assert r.status_code == 503 and "still ingest" in r.json()["detail"]
+
+
+def test_searches_are_capped_per_account(user_client, monkeypatch):
+    from app import deps
+    monkeypatch.setattr(deps.search_limiter, "limit", 2)
+    rid = _ready_repo(user_client)["id"]
+    find = lambda: user_client.post(f"/api/repos/{rid}/suspects", json={"description": "session cookie expires early"})  # noqa: E731
+    assert find().status_code == 200 and find().status_code == 200
+    r = find()
+    assert r.status_code == 429 and "Retry-After" in r.headers
+
+
+def test_parsed_history_is_reused_until_a_resync(user_client, monkeypatch):
+    from app.routers import repos as router
+    rid = _ready_repo(user_client)["id"]
+    calls = []
+    real = router.json.loads
+    def counting(text, *a, **k):
+        if isinstance(text, str) and '"metadata"' in text:   # only stored commit histories
+            calls.append(1)
+        return real(text, *a, **k)
+    monkeypatch.setattr(router.json, "loads", counting)
+    for path in ("overview", "hotfiles", "authors"):
+        assert user_client.get(f"/api/repos/{rid}/{path}").status_code == 200
+    assert len(calls) == 1                     # parsed once for three requests
+    first = list(router._PARSED)
+    assert user_client.post(f"/api/repos/{rid}/resync").status_code == 202
+    assert user_client.get(f"/api/repos/{rid}/overview").status_code == 200
+    latest = list(router._PARSED)[-1]
+    assert latest[0] == rid and latest not in first   # the re-synced history, not the old one

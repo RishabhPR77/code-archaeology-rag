@@ -219,7 +219,8 @@ def _pct(x) -> str:
 
 def _row(label: str, ranks: list, ks: tuple) -> str:
     s = scores(ranks, ks)
-    return "| " + " | ".join([label, *[_pct(s[f"@{k}"]) for k in ks], "n/a" if s["mrr"] is None else f"{s['mrr']:.2f}"]) + " |"
+    mrr = "n/a" if s["mrr"] is None else f"{s['mrr']:.2f}"
+    return "| " + " | ".join([label, *[_pct(s[f"@{k}"]) for k in ks], mrr]) + " |"
 
 
 def _header(first: str, ks: tuple, word: str) -> list[str]:
@@ -228,8 +229,11 @@ def _header(first: str, ks: tuple, word: str) -> list[str]:
 
 
 def _report(repos: list[dict], commits: int, seconds: float) -> str:
-    search_ranks = lambda kind, label: [r for repo in repos for r in repo["search"][kind]["ranks"][label]]
-    suspect_ranks = lambda label: [r for repo in repos for r in repo["suspects"]["ranks"][label]]
+    def search_ranks(kind: str, label: str) -> list:
+        return [r for repo in repos for r in repo["search"][kind]["ranks"][label]]
+
+    def suspect_ranks(label: str) -> list:
+        return [r for repo in repos for r in repo["suspects"]["ranks"][label]]
     model = ("Pinecone's hosted llama-text-embed-v2, the live site's model, in a throwaway index; search only"
              if HOSTED else "local BGE-small embeddings")
     lines = [
@@ -273,7 +277,8 @@ def _report(repos: list[dict], commits: int, seconds: float) -> str:
               *_header("Repository, question, search", SEARCH_K, "Found in"),
               *[_row(f"{r['name']}, {kind.split()[1]}, {'now' if label == APP_SEARCH else 'before'}",
                      r["search"][kind]["ranks"][label], SEARCH_K)
-                for r in repos if r["prs"] for kind in ("PR description", "PR title") for label in (OLD_SEARCH, APP_SEARCH)],
+                for r in repos if r["prs"] for kind in ("PR description", "PR title")
+                for label in (OLD_SEARCH, APP_SEARCH)],
               ""]
     if HOSTED:
         return "\n".join(lines)
@@ -289,7 +294,8 @@ def _report(repos: list[dict], commits: int, seconds: float) -> str:
         "### All repositories together",
         "",
         *_header("Ranking", SUSPECT_K, "Cause in"),
-        *[_row(label, suspect_ranks(label), SUSPECT_K) for label in [*WEIGHT_SETS, OLD_SUSPECTS, "Newest commit first"]],
+        *[_row(label, suspect_ranks(label), SUSPECT_K)
+          for label in [*WEIGHT_SETS, OLD_SUSPECTS, "Newest commit first"]],
         "",
         "### Per repository, with the app's weights",
         "",

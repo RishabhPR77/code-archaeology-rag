@@ -66,3 +66,19 @@ def test_github_disabled_without_config(client):
         "demo_available": False}
     assert client.get("/api/auth/github/login", follow_redirects=False).status_code == 404
     assert client.get("/api/auth/google/login", follow_redirects=False).status_code == 404
+
+
+def test_sign_out_everywhere_ends_sessions_on_other_devices(client):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    register(client, email="me@example.com")
+    with TestClient(app) as laptop:
+        laptop.post("/api/auth/login", json={"email": "me@example.com", "password": "correct-horse-battery"})
+        assert laptop.get("/api/auth/me").status_code == 200
+        assert client.post("/api/auth/logout-everywhere").status_code == 204
+        assert laptop.get("/api/auth/me").status_code == 401           # the other device is signed out too
+        assert client.get("/api/auth/me").status_code == 401
+        # Signing in again works, with a token for the new version
+        laptop.post("/api/auth/login", json={"email": "me@example.com", "password": "correct-horse-battery"})
+        assert laptop.get("/api/auth/me").status_code == 200
+

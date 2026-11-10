@@ -127,6 +127,7 @@ export const api = {
   register: (email: string, password: string, name: string) =>
     post<Me>("/auth/register", { email, password, name }),
   logout: () => post<void>("/auth/logout"),
+  logoutEverywhere: () => post<void>("/auth/logout-everywhere"),
   demo: () => post<Me>("/auth/demo"),
   profile: () => get<Profile>("/auth/profile"),
   rename: (name: string) => request<Me>("PATCH", "/auth/me", { name }),

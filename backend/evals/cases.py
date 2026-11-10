@@ -50,7 +50,8 @@ def retrieval_cases(chunks: list[dict]) -> tuple[list[dict], list[dict], list[di
                 text = re.sub(re.escape(title), "", text, flags=re.IGNORECASE)
         indexed.append({**chunk, "text": text})
     # One PR can be linked to several commits; finding any of them counts
-    as_cases = lambda d: [{"question": q, "answers": shas} for q, shas in d.items()]
+    def as_cases(d: dict) -> list[dict]:
+        return [{"question": q, "answers": shas} for q, shas in d.items()]
     return indexed, as_cases(titles), as_cases(descriptions)
 
 

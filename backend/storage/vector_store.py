@@ -268,7 +268,7 @@ class _LocalBackend:
             if flt and any(meta.get(k) != v for k, v in flt.items()):
                 continue
             # Vectors are normalised, so the dot product is the cosine similarity
-            scored.append((sum(a * b for a, b in zip(vector, item["values"])), vid, meta))
+            scored.append((sum(a * b for a, b in zip(vector, item["values"], strict=True)), vid, meta))
         scored.sort(key=lambda x: x[0], reverse=True)
         return scored[:top_k]
 
@@ -314,7 +314,7 @@ class VectorStore:
             batch  = new[i:i+batch_size]
             embeds = _embed_docs([c["text"] for c in batch])
             vectors = [{"id": chunk["id"], "values": emb, "metadata": vector_metadata(chunk)}
-                       for chunk, emb in zip(batch, embeds)]
+                       for chunk, emb in zip(batch, embeds, strict=True)]
             self.backend.upsert(vectors, self.namespace)
 
     # Hybrid search: meaning (dense vectors) and keywords (BM25), merged by rank

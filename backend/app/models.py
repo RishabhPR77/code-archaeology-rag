@@ -35,6 +35,9 @@ class User(Base):
     # The shared, read-only account behind "Try the demo"; it never signs in with a password
     is_demo:          Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     active_provider:  Mapped[str | None] = mapped_column(String(32))
+    # Every session token carries this number. Raising it ends all of the user's sessions at once,
+    # which a stateless token can't do on its own ("sign out everywhere")
+    session_version:  Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at:       Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     credentials: Mapped[list["ProviderCredential"]] = relationship(

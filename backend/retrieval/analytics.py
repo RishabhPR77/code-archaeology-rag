@@ -138,6 +138,6 @@ def pull_requests(chunks) -> list[dict]:
                 break
         prs[num] = {"number": num, "title": title.strip() or "Untitled",
                     "author": author or meta["author"], "merged_at": meta["timestamp"],
-                    "labels": [l.strip() for l in meta.get("pr_labels", "").split(",") if l.strip()],
+                    "labels": [label.strip() for label in meta.get("pr_labels", "").split(",") if label.strip()],
                     "commit_sha": meta["sha"], "files": _files(c)}
     return sorted(prs.values(), key=lambda p: p["number"], reverse=True)

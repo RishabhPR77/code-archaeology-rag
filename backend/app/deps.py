@@ -18,9 +18,10 @@ DEMO_READ_ONLY = "This is a read-only demo. Sign up free to add your own reposit
 
 def current_user(request: Request, db: Session = Depends(get_db)) -> User:
     token = request.cookies.get(SESSION_COOKIE)
-    user_id = decode_session_token(token) if token else None
-    user = db.get(User, user_id) if user_id else None
-    if user is None:
+    session = decode_session_token(token) if token else None
+    user = db.get(User, session[0]) if session else None
+    # A token from before "sign out everywhere" carries an old version, so it no longer works
+    if user is None or session[1] != (user.session_version or 0):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not signed in")
     # Every route that changes something goes through here, so the demo is read-only by default:
     # a new endpoint stays closed to it unless it's added to DEMO_WRITABLE
@@ -73,6 +74,10 @@ class RateLimiter:
 
 
 auth_limiter = RateLimiter(limit=10, window_seconds=300)
+# Every search embeds the question with the shared Pinecone allowance, so each account gets a fair share
+search_limiter = RateLimiter(limit=150, window_seconds=3600,
+                             message="That's a lot of searches in the last hour, so this one was held back.")
+
 # Demo visitors share one account; each Who broke it? search costs embedding tokens,
 # so it's capped per visitor and across all visitors
 DEMO_BUSY = "The demo has a limit on searches. Sign up free to keep going."

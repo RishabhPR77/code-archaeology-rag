@@ -1,7 +1,9 @@
 # app/routers/repos.py
 import json
 import logging
+import threading
 import uuid
+from collections import OrderedDict
 from datetime import timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query as Q, Request, status
@@ -12,7 +14,7 @@ from sqlalchemy.orm import Session
 from app import llm
 from app.config import get_settings
 from app.db import SessionLocal, get_db
-from app.deps import client_ip, demo_limiter, demo_total_limiter, owned_repo, verified_user
+from app.deps import client_ip, demo_limiter, demo_total_limiter, owned_repo, search_limiter, verified_user
 from app.llm import ProviderError
 from app.models import Conversation, IngestEvent, Query, Repo, RepoData, User, utcnow
 from app.routers.providers import provider_http_error
@@ -46,8 +48,28 @@ def _ready_data(repo: Repo) -> RepoData:
     return repo.data
 
 
+# Parsed commit histories, most recently used last. The stored JSON is megabytes for a large repository and
+# the Overview tab alone asks for it several times, so parsing it once matters on a small server.
+_PARSED: OrderedDict[tuple[str, str], list[dict]] = OrderedDict()
+_PARSED_MAX = 4
+_parsed_lock = threading.Lock()
+
+
 def _chunks(repo: Repo) -> list[dict]:
-    return json.loads(_ready_data(repo).chunks_json)
+    """A ready repository's stored commits. Keyed by when it became ready, so a re-sync never serves the old ones."""
+    if repo.status != "ready":
+        _ready_data(repo)   # raises the "still being ingested" error
+    key = (repo.id, repo.ready_at.isoformat() if repo.ready_at else "")
+    with _parsed_lock:
+        if key in _PARSED:
+            _PARSED.move_to_end(key)
+            return _PARSED[key]
+    chunks = json.loads(_ready_data(repo).chunks_json)
+    with _parsed_lock:
+        _PARSED[key] = chunks
+        while len(_PARSED) > _PARSED_MAX:
+            _PARSED.popitem(last=False)
+    return chunks
 
 
 def _check_ingest_allowed(db: Session, user: User, max_commits: int, new_repo: bool):
@@ -89,6 +111,11 @@ def _optional_llm(db: Session, user: User):
     """Like _llm_for, but (None, None, None) when no model is connected, for features that work without one."""
     cred = credential(db, user, user.active_provider) if user.active_provider else None
     return _llm_for(db, user) if cred and cred.model else (None, None, None)
+
+
+def _limit_search(user: User):
+    """Searches embed the question with the server's Pinecone allowance; cap each account per hour."""
+    search_limiter.check(f"search:{user.id}")
 
 
 def _limit_demo(request: Request, user: User, feature: str):
@@ -134,7 +161,8 @@ def range_preview(url: str, skip: int = Q(0, ge=0, le=MAX_COMMIT_REACH), count: 
         oldest = github.commit_at(full_name, last, token) if total and last != first else newest
     except github.GitHubUnavailable:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
-                            "GitHub isn't answering right now, so the range can't be previewed. You can still ingest it.")
+                            "GitHub isn't answering right now, so the range can't be previewed. "
+                            "You can still ingest it.") from None
     return RangePreviewOut(full_name=full_name, total=total, reach=MAX_COMMIT_REACH,
                            newest=CommitBriefOut(**newest) if newest else None,
                            oldest=CommitBriefOut(**oldest) if oldest else None)
@@ -286,6 +314,7 @@ def _save_exchange(db: Session, repo_id: str, chat_id: int | None, body: AskIn, 
 @router.post("/{repo_id}/ask", response_model=QueryOut)
 def ask(body: AskIn, repo: Repo = Depends(owned_repo),
         user: User = Depends(verified_user), db: Session = Depends(get_db)):
+    _limit_search(user)
     chunks = _chunks(repo)
     chat = _owned_chat(db, repo, body.conversation_id) if body.conversation_id is not None else None
     provider, model, generate = _llm_for(db, user)
@@ -293,7 +322,7 @@ def ask(body: AskIn, repo: Repo = Depends(owned_repo),
         result = rag.ask(body.question, repo.namespace, generate, mode=body.mode, only_pr=body.only_pr,
                          history=_chat_history(db, chat), chunks=chunks)
     except ProviderError as e:
-        raise provider_http_error(e)
+        raise provider_http_error(e) from e
     return _save_exchange(db, repo.id, chat.id if chat else None, body, provider, model,
                           result["answer"], result["sources"], result["search_query"])
 
@@ -307,6 +336,7 @@ def ask_stream(body: AskIn, repo: Repo = Depends(owned_repo),
                user: User = Depends(verified_user), db: Session = Depends(get_db)):
     """Like /ask, but the answer arrives as server-sent events while the model writes it:
     `sources` (what was found), then `delta` pieces, then `done` with the saved exchange, or `error`."""
+    _limit_search(user)
     chunks = _chunks(repo)
     chat = _owned_chat(db, repo, body.conversation_id) if body.conversation_id is not None else None
     provider, model_id, api_key = _credential_for(db, user)
@@ -318,7 +348,7 @@ def ask_stream(body: AskIn, repo: Repo = Depends(owned_repo),
                                mode=body.mode, only_pr=body.only_pr, history=_chat_history(db, chat),
                                chunks=chunks)
     except ProviderError as e:
-        raise provider_http_error(e)
+        raise provider_http_error(e) from e
     repo_id, chat_id = repo.id, chat.id if chat else None
     searched = prepared["search_query"]
 
@@ -418,14 +448,15 @@ def suspects(body: SuspectsIn, request: Request, repo: Repo = Depends(owned_repo
              user: User = Depends(verified_user), db: Session = Depends(get_db)):
     data = _ready_data(repo)
     _limit_demo(request, user, "suspects")
+    _limit_search(user)
     # The ranking needs no model; an explanation is added when one is connected
     provider, model, generate = _optional_llm(db, user)
     try:
-        result = rag.find_suspects(body.description, repo.namespace, json.loads(data.chunks_json),
+        result = rag.find_suspects(body.description, repo.namespace, _chunks(repo),
                                    json.loads(data.origins_json) if data.origins_json else None,
                                    body.since.isoformat() if body.since else None, generate)
     except ProviderError as e:
-        raise provider_http_error(e)
+        raise provider_http_error(e) from e
     return SuspectsOut(**result, provider=provider, model=model)
 
 
@@ -440,7 +471,7 @@ def timeline(body: TimelineIn, repo: Repo = Depends(owned_repo),
     try:
         result = rag.timeline(body.path, chunks, generate, body.match)
     except ProviderError as e:
-        raise provider_http_error(e)
+        raise provider_http_error(e) from e
     return TimelineOut(path=body.path, answer=result["answer"], provider=provider if generate else None,
                        model=model if generate else None, entries=result["entries"])
 
