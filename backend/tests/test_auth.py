@@ -11,14 +11,14 @@ def test_register_sets_session_and_me_works(client):
 
 
 def test_session_cookie_is_httponly_and_lax(client):
-    r = client.post("/api/auth/register", json={"email": "a@example.com", "password": "password123"})
+    r = client.post("/api/auth/register", json={"email": "a@example.com", "password": "a-better-pass-1"})
     cookie = r.headers["set-cookie"].lower()
     assert "httponly" in cookie and "samesite=lax" in cookie
 
 
 def test_duplicate_email_rejected_case_insensitively(client):
     register(client, email="dev@example.com")
-    r = client.post("/api/auth/register", json={"email": "DEV@example.com", "password": "password123"})
+    r = client.post("/api/auth/register", json={"email": "DEV@example.com", "password": "a-better-pass-1"})
     assert r.status_code == 409
 
 

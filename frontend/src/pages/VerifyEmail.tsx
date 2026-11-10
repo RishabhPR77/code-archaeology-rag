@@ -1,24 +1,32 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { MailCheck } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router";
+import { Navigate, useLocation, useNavigate } from "react-router";
 import { toast } from "sonner";
 
 import { Logo, ThemeToggle } from "../components/brand";
 import { Button, ErrorNotice, Input } from "../components/ui";
 import { api } from "../lib/api";
-import { meKey, useSession, useSignOut } from "../lib/auth";
+import { useMe, useSignOut } from "../lib/auth";
+import { pendingEmail, useAuthSuccess } from "./auth/shared";
 
 const RESEND_SECONDS = 60;
 
+/** Enter the emailed code. Just after sign-up there's no session yet: the code is checked against the
+ *  address it was sent to, and a correct code signs the person in. Someone signed in with a password
+ *  but not yet confirmed lands here too. */
 export default function VerifyEmail() {
-  const { user } = useSession();
+  const { data } = useMe();
+  const location = useLocation();
+  const state = location.state as { email?: string; resendIn?: number } | null;
+  const signedIn = data && !data.user.is_demo ? data.user : null;
+  const email = signedIn?.email ?? state?.email ?? pendingEmail.get();
   const [code, setCode] = useState("");
   // The server knows when the last code went out, so a reload doesn't restart the wait
-  const [cooldown, setCooldown] = useState(user.code_resend_in);
-  const qc = useQueryClient();
+  const [cooldown, setCooldown] = useState(signedIn?.code_resend_in ?? state?.resendIn ?? 0);
   const navigate = useNavigate();
   const signOut = useSignOut();
+  const onSuccess = useAuthSuccess();
 
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -27,22 +35,24 @@ export default function VerifyEmail() {
   }, [cooldown]);
 
   const verify = useMutation({
-    mutationFn: () => api.verifyEmail(code),
+    mutationFn: () => api.verifyEmail(code, signedIn ? undefined : email),
     onSuccess: (me) => {
-      qc.setQueryData(meKey, me);
       toast.success("Email confirmed", { description: "Welcome to Code Archaeologist." });
-      navigate("/app", { replace: true });
+      onSuccess(me);
     },
   });
   const resend = useMutation({
-    mutationFn: api.resendCode,
+    mutationFn: () => api.resendCode(signedIn ? undefined : email),
     onSuccess: () => {
       setCooldown(RESEND_SECONDS);
       setCode("");
       verify.reset();
-      toast.success("New code sent", { description: `Check ${user.email}` });
+      toast.success("New code sent", { description: `Check ${email}` });
     },
   });
+
+  if (signedIn?.email_verified) return <Navigate to="/app" replace />;
+  if (!email) return <Navigate to="/register" replace />;
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -62,8 +72,8 @@ export default function VerifyEmail() {
           </div>
           <h1 className="mt-5 text-2xl font-semibold tracking-tight">Check your email</h1>
           <p className="mt-1.5 text-sm text-muted">
-            We sent a 6-digit code to <span className="font-medium text-text">{user.email}</span>.
-            It expires in 10 minutes.
+            We sent a 6-digit code to <span className="font-medium text-text">{email}</span>.
+            It expires in 10 minutes. If you already have an account, the email says so instead.
           </p>
 
           <form onSubmit={submit} className="mt-8 space-y-4">
@@ -95,7 +105,7 @@ export default function VerifyEmail() {
             </button>
             <button
               type="button"
-              onClick={async () => { await signOut(); navigate("/register"); }}
+              onClick={async () => { pendingEmail.clear(); if (signedIn) await signOut(); navigate("/register"); }}
               className="text-muted hover:text-text cursor-pointer"
             >
               Use a different email

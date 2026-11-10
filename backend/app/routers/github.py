@@ -1,6 +1,6 @@
 # app/routers/github.py
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -8,7 +8,7 @@ from app.db import get_db
 from app.deps import verified_user
 from app.models import User
 from app.schemas import GitHubInstallationOut, GitHubRepoOut, GitHubStatusOut
-from app.services import github
+from app.services import audit, github
 
 router = APIRouter(prefix="/api/github", tags=["github"])
 
@@ -42,7 +42,8 @@ def github_repos(user: User = Depends(verified_user), db: Session = Depends(get_
 
 
 @router.delete("", status_code=status.HTTP_204_NO_CONTENT)
-def disconnect_github(user: User = Depends(verified_user), db: Session = Depends(get_db)):
+def disconnect_github(request: Request, user: User = Depends(verified_user), db: Session = Depends(get_db)):
     """Forget the tokens. Removing the app from the user's GitHub account is done on GitHub."""
     github.clear_tokens(user)
     db.commit()
+    audit.record(db, user, "github_disconnected", request)

@@ -27,6 +27,7 @@ ENV HOME=/home/user \
     STATIC_DIR=/home/user/app/static \
     DATA_DIR=/home/user/app/data \
     EMBEDDING_PROVIDER=pinecone \
+    CLIENT_IP_HEADER=true-client-ip \
     PORT=10000
 WORKDIR $HOME/app
 
@@ -43,5 +44,7 @@ COPY --chown=user --from=web /web/dist ./static
 RUN mkdir -p data
 
 EXPOSE 10000
-# One worker: ingest jobs, the ingest semaphore and the login limiter live in-process
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips "*"
+# One worker: ingest jobs and the ingest semaphore live in-process.
+# No --proxy-headers: X-Forwarded-For can be set by the visitor, and Render's proxy keeps what they sent.
+# The visitor's address comes from CLIENT_IP_HEADER instead, which Render's Cloudflare edge sets itself.
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT}

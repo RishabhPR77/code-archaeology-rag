@@ -16,26 +16,112 @@ def as_utc(dt: datetime | None) -> datetime | None:
 
 
 # ── Auth ───────────────────────────────────────────────────────────
+# Passwords people pick most often (all 8+ characters). Rejecting them follows NIST SP 800-63B:
+# check against known-bad passwords instead of forcing symbols and digits.
+COMMON_PASSWORDS = frozenset("""
+12345678 123456789 1234567890 0123456789 11111111 00000000 88888888 12341234 87654321 11223344
+password password1 password12 password123 passw0rd p@ssw0rd p@ssword iloveyou iloveyou1 sunshine1
+qwertyui qwertyuiop qwerty123 qwerty12 1q2w3e4r 1q2w3e4r5t 1qaz2wsx zaq12wsx asdfghjkl asdfasdf
+abcd1234 abcdefgh abc12345 aa123456 a1234567 princess1 football1 baseball1 superman1 starwars1
+welcome1 welcome123 letmein1 letmein123 trustno1 dragon123 monkey123 master123 shadow123 admin123
+administrator changeme changeme1 computer internet whatever1 michael1 charlie1 jennifer1 jordan23
+""".split())
+
+
+def _check_password(v: str) -> str:
+    if len(v.encode()) > 72:
+        raise ValueError("Password must be at most 72 bytes")
+    if v.lower() in COMMON_PASSWORDS or len(set(v)) < 3:
+        raise ValueError("That password is too easy to guess. Try a few words together.")
+    return v
+
+
 class RegisterIn(BaseModel):
     email:    EmailStr
     password: str = Field(min_length=8)
     name:     str = Field(default="", max_length=120)
 
-    @field_validator("password")
-    @classmethod
-    def _bcrypt_limit(cls, v: str) -> str:
-        if len(v.encode()) > 72:
-            raise ValueError("Password must be at most 72 bytes")
-        return v
+    _password = field_validator("password")(_check_password)
+
+    @model_validator(mode="after")
+    def _not_the_email(self):
+        if self.password.lower() in (self.email.lower(), self.email.split("@")[0].lower()):
+            raise ValueError("Your password can't be your email address")
+        return self
 
 
 class LoginIn(BaseModel):
     email:    EmailStr
-    password: str
+    password: str = Field(max_length=200)
+
+
+class EmailIn(BaseModel):
+    email: EmailStr
 
 
 class VerifyEmailIn(BaseModel):
-    code: str = Field(pattern=r"^\d{6}$")
+    code:  str = Field(pattern=r"^\d{6}$")
+    # Without a session (just after sign-up), the code is checked against this address
+    email: EmailStr | None = None
+
+
+class ResendCodeIn(BaseModel):
+    email: EmailStr | None = None
+
+
+class CodeSentOut(BaseModel):
+    """The same reply whether or not the address already had an account."""
+    email:     str
+    resend_in: int
+
+
+class ResetPasswordIn(BaseModel):
+    email:    EmailStr
+    code:     str = Field(pattern=r"^\d{6}$")
+    password: str = Field(min_length=8)
+
+    _password = field_validator("password")(_check_password)
+
+
+class ChangePasswordIn(BaseModel):
+    current_password: str | None = Field(default=None, max_length=200)   # not needed to add a first password
+    new_password:     str = Field(min_length=8)
+
+    _password = field_validator("new_password")(_check_password)
+
+
+class TwoFactorRequiredOut(BaseModel):
+    """The password (or Google/GitHub) was right; an authenticator code is needed next."""
+    two_factor_required: Literal[True] = True
+
+
+class TwoFactorCodeIn(BaseModel):
+    # Six digits from the authenticator app, or a recovery code such as k7m2-9qxp
+    code: str = Field(min_length=6, max_length=20)
+
+
+class TwoFactorSetupOut(BaseModel):
+    secret: str            # for typing into the app by hand
+    uri:    str            # otpauth:// link
+    qr_svg: str            # data: URI of the QR code
+
+
+class RecoveryCodesOut(BaseModel):
+    codes: list[str]
+
+
+class DeleteAccountIn(BaseModel):
+    confirm_email: str = Field(max_length=320)
+    code:          str | None = Field(default=None, max_length=20)   # needed when two-step sign-in is on
+
+
+class SecurityEventOut(BaseModel):
+    kind:       str
+    label:      str
+    detail:     str
+    ip:         str
+    device:     str
+    created_at: datetime
 
 
 class UserOut(BaseModel):
@@ -49,6 +135,8 @@ class UserOut(BaseModel):
     github_connected: bool
     google_linked:    bool
     has_password:     bool
+    two_factor_enabled:  bool = False
+    recovery_codes_left: int = 0
     is_admin:        bool
     is_demo:         bool = False      # the shared, read-only demo account
     active_provider: str | None

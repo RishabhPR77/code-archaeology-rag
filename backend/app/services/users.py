@@ -1,14 +1,13 @@
 # app/services/users.py
-import math
 from datetime import timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import EmailVerification, IngestEvent, ProviderCredential, Repo, User, utcnow
+from app.models import IngestEvent, ProviderCredential, Repo, User, utcnow
 from app.schemas import LimitsOut, UserOut, as_utc
-from app.services.verification import RESEND_COOLDOWN
+from app.services import two_factor, verification
 
 COMMIT_OPTIONS = (50, 100, 200, 300, 500)
 
@@ -19,13 +18,7 @@ def credential(db: Session, user: User, provider: str) -> ProviderCredential | N
 
 
 def _resend_in(db: Session, user: User) -> int:
-    if user.email_verified:
-        return 0
-    record = db.get(EmailVerification, user.id)
-    if record is None:
-        return 0
-    wait = as_utc(record.last_sent_at) + RESEND_COOLDOWN - utcnow()
-    return max(0, math.ceil(wait.total_seconds()))
+    return 0 if user.email_verified else verification.resend_in(db, user, "verify")
 
 
 def user_out(db: Session, user: User) -> UserOut:
@@ -35,6 +28,8 @@ def user_out(db: Session, user: User) -> UserOut:
                    github_login=user.github_login,
                    github_connected=user.github_token_enc is not None, google_linked=user.google_sub is not None,
                    has_password=user.password_hash is not None,
+                   two_factor_enabled=two_factor.enabled(user),
+                   recovery_codes_left=two_factor.recovery_codes_left(user),
                    is_admin=user.is_admin, is_demo=user.is_demo, active_provider=user.active_provider,
                    active_model=cred.model if cred else None, created_at=as_utc(user.created_at))
 

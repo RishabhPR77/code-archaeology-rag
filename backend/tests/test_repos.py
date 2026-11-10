@@ -561,7 +561,7 @@ def test_searches_are_capped_per_account(user_client, monkeypatch):
 
 
 def test_parsed_history_is_reused_until_a_resync(user_client, monkeypatch):
-    from app.routers import repos as router
+    from app.services import repo_context as router
     rid = _ready_repo(user_client)["id"]
     calls = []
     real = router.json.loads
@@ -573,8 +573,8 @@ def test_parsed_history_is_reused_until_a_resync(user_client, monkeypatch):
     for path in ("overview", "hotfiles", "authors"):
         assert user_client.get(f"/api/repos/{rid}/{path}").status_code == 200
     assert len(calls) == 1                     # parsed once for three requests
-    first = list(router._PARSED)
+    first = list(router.PARSED)
     assert user_client.post(f"/api/repos/{rid}/resync").status_code == 202
     assert user_client.get(f"/api/repos/{rid}/overview").status_code == 200
-    latest = list(router._PARSED)[-1]
+    latest = list(router.PARSED)[-1]
     assert latest[0] == rid and latest not in first   # the re-synced history, not the old one

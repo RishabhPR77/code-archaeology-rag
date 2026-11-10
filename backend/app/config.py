@@ -19,6 +19,15 @@ class Settings(BaseSettings):
     # Secrets — both required. See .env.example for how to generate them.
     secret_key: str = Field(min_length=32)        # signs session JWTs
     encryption_key: str = Field(min_length=44)    # Fernet key that encrypts user API keys
+    # Rotation: put the old value here (comma-separated for several) when changing a key above.
+    # Old sessions and stored secrets keep working; new ones use the new key.
+    secret_key_previous: str = ""
+    encryption_key_previous: str = ""
+
+    # The request header that holds the visitor's real IP, set by the host's proxy and not by the
+    # visitor (e.g. True-Client-IP behind Render's Cloudflare). Empty -> the connection's address.
+    # X-Forwarded-For is never trusted: Render's proxy keeps whatever the visitor sent in it.
+    client_ip_header: str = ""
 
     data_dir: Path = BACKEND_DIR / "data"
     database_url: str = ""                        # empty -> SQLite file in data_dir
@@ -77,6 +86,15 @@ class Settings(BaseSettings):
         if self.email_delivery == "brevo" and not (self.brevo_api_key and self.email_from):
             raise ValueError("EMAIL_DELIVERY=brevo needs BREVO_API_KEY and EMAIL_FROM")
         return self
+
+    @property
+    def secret_keys(self) -> list[str]:
+        """The current signing key first, then any previous ones still accepted."""
+        return [self.secret_key, *(k.strip() for k in self.secret_key_previous.split(",") if k.strip())]
+
+    @property
+    def encryption_keys(self) -> list[str]:
+        return [self.encryption_key, *(k.strip() for k in self.encryption_key_previous.split(",") if k.strip())]
 
     @property
     def email_verification_enabled(self) -> bool:

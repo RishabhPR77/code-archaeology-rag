@@ -11,6 +11,8 @@ export interface User {
   github_connected: boolean;
   google_linked: boolean;
   has_password: boolean;
+  two_factor_enabled: boolean;
+  recovery_codes_left: number;
   is_admin: boolean;
   is_demo: boolean;   // the shared, read-only demo account
   active_provider: ProviderId | null;
@@ -294,4 +296,30 @@ export interface TimelineResult {
   provider: ProviderId | null;
   model: string | null;
   entries: Commit[];
+}
+
+// Sign-up when email codes are on: the same reply whether or not the address had an account
+export interface CodeSent {
+  email: string;
+  resend_in: number;
+}
+
+// The password (or Google/GitHub) was right; an authenticator code is needed next
+export interface TwoFactorRequired {
+  two_factor_required: true;
+}
+
+export interface TwoFactorSetup {
+  secret: string;
+  uri: string;
+  qr_svg: string;   // data: URI
+}
+
+export interface SecurityEvent {
+  kind: string;
+  label: string;
+  detail: string;
+  ip: string;
+  device: string;
+  created_at: string;
 }

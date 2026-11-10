@@ -6,11 +6,14 @@ import { AppLayout } from "./layouts/AppLayout";
 import { useMe } from "./lib/auth";
 import { Landing } from "./pages/Landing";
 import { Privacy, Terms } from "./pages/Legal";
-import { Login, Register } from "./pages/Auth";
+import { ForgotPassword } from "./pages/auth/ForgotPassword";
+import { Login } from "./pages/auth/Login";
+import { Register } from "./pages/auth/Register";
+import { TwoFactorPage } from "./pages/auth/TwoFactor";
 import { NotFound } from "./pages/NotFound";
 
 const Dashboard = lazy(() => import("./pages/Dashboard"));
-const Settings = lazy(() => import("./pages/Settings"));
+const Settings = lazy(() => import("./pages/settings/Settings"));
 const Profile = lazy(() => import("./pages/Profile"));
 const RepoPage = lazy(() => import("./pages/repo/RepoPage"));
 const VerifyEmail = lazy(() => import("./pages/VerifyEmail"));
@@ -32,12 +35,11 @@ function RequireAuth({ children }: { children: ReactNode }) {
   return children;
 }
 
-// Signed in but email not confirmed yet
-function RequireUnverified({ children }: { children: ReactNode }) {
-  const { data, isPending } = useMe();
+// Just signed up (a code was emailed, no session yet), or signed in but not confirmed yet.
+// The page itself sends anyone else on to the right place.
+function VerifyGate({ children }: { children: ReactNode }) {
+  const { isPending } = useMe();
   if (isPending) return <FullPageSpinner />;
-  if (!data) return <Navigate to="/login" replace />;
-  if (data.user.email_verified) return <Navigate to="/app" replace />;
   return <Suspense fallback={<FullPageSpinner />}>{children}</Suspense>;
 }
 
@@ -55,7 +57,9 @@ export const router = createBrowserRouter([
   { path: "/terms", element: <Terms /> },
   { path: "/login", element: <GuestOnly><Login /></GuestOnly> },
   { path: "/register", element: <GuestOnly><Register /></GuestOnly> },
-  { path: "/verify-email", element: <RequireUnverified><VerifyEmail /></RequireUnverified> },
+  { path: "/verify-email", element: <VerifyGate><VerifyEmail /></VerifyGate> },
+  { path: "/forgot-password", element: <GuestOnly><ForgotPassword /></GuestOnly> },
+  { path: "/two-factor", element: <GuestOnly><TwoFactorPage /></GuestOnly> },
   {
     path: "/app",
     element: (

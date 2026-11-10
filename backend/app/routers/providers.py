@@ -1,5 +1,5 @@
 # app/routers/providers.py
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app import llm
@@ -10,6 +10,7 @@ from app.models import ProviderCredential, User
 from app.schemas import (ActiveProviderIn, ModelOut, ProviderOut, SaveKeyIn, SaveKeyOut,
                          SelectModelIn)
 from app.security import decrypt_secret, encrypt_secret, key_hint
+from app.services import audit
 from app.services.users import credential
 
 router = APIRouter(prefix="/api/providers", tags=["providers"])
@@ -49,7 +50,7 @@ def list_providers(user: User = Depends(verified_user), db: Session = Depends(ge
 
 
 @router.put("/{provider_id}/key", response_model=SaveKeyOut)
-def save_key(provider_id: str, body: SaveKeyIn,
+def save_key(request: Request, provider_id: str, body: SaveKeyIn,
              user: User = Depends(verified_user), db: Session = Depends(get_db)):
     _require_provider(provider_id)
     # Listing models with the key is the validation step
@@ -72,18 +73,21 @@ def save_key(provider_id: str, body: SaveKeyIn,
     if user.active_provider is None:
         user.active_provider = provider_id
     db.commit()
+    audit.record(db, user, "api_key_saved", request, f"{PROVIDERS[provider_id].name}, {cred.key_hint}")
     return SaveKeyOut(provider=_provider_out(user, provider_id, cred),
                       models=[ModelOut(**m.public()) for m in models])
 
 
 @router.delete("/{provider_id}/key", status_code=status.HTTP_204_NO_CONTENT)
-def delete_key(provider_id: str, user: User = Depends(verified_user), db: Session = Depends(get_db)):
+def delete_key(provider_id: str, request: Request, user: User = Depends(verified_user),
+               db: Session = Depends(get_db)):
     cred = _require_credential(db, user, provider_id)
     db.delete(cred)
     if user.active_provider == provider_id:
         others = [c for c in user.credentials if c.provider != provider_id]
         user.active_provider = others[0].provider if others else None
     db.commit()
+    audit.record(db, user, "api_key_removed", request, PROVIDERS[provider_id].name)
 
 
 @router.get("/{provider_id}/models", response_model=list[ModelOut])

@@ -11,7 +11,7 @@ import { authConfigKey, demoReposKey, reposKey } from "../../lib/queries";
 import type { Repo } from "../../lib/types";
 import { cn, commitSpan, formatNumber, INGEST_STAGES, isIngesting, relativeTime } from "../../lib/utils";
 import { RepoStatusBadge } from "../Dashboard";
-import { Ask } from "./Ask";
+import { Ask } from "./ask/Ask";
 import { BugOrigins } from "./BugOrigins";
 import { Authors, CoChange, HotFiles } from "./Insights";
 import { Commits } from "./Commits";

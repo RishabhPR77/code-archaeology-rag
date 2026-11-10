@@ -1,156 +1,17 @@
+import type { AskMode, Chat, QueryResult, Repo, Source } from "../../../lib/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, ChevronDown, Eye, GitPullRequest, MessageSquareText, Plus, Sparkles, Square, Trash2 } from "lucide-react";
+import { ArrowUp, Eye, MessageSquareText, Plus, Sparkles, Square, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Link, useSearchParams } from "react-router";
 import { toast } from "sonner";
-
-import { ProviderMark } from "../../components/brand";
-import { Markdown } from "../../components/Markdown";
-import { Button, Card, ConfirmDialog, ErrorNotice, Segmented, Skeleton } from "../../components/ui";
-import { api, ApiError } from "../../lib/api";
-import { useSession } from "../../lib/auth";
-import type { AskMode, Chat, QueryResult, Repo, Source } from "../../lib/types";
-import { cn, formatDate, relativeTime, shortSha } from "../../lib/utils";
-
-const SUGGESTIONS = [
-  "What are the most significant changes made recently?",
-  "Which bugs were fixed, and what caused them?",
-  "Were there any major refactors? Why were they done?",
-  "Summarize what each contributor worked on.",
-  "Which parts of the codebase are the most fragile?",
-  "What new features were added and why?",
-];
-
-// The answer being written: text so far, what the search found, and whether the user pressed Stop
-interface Draft { text: string; searchQuery: string | null; found: boolean; stopped: boolean }
-
-// The user pressed Stop
-const isAbort = (e: unknown) => e instanceof DOMException && e.name === "AbortError";
-
-const MODES: { value: AskMode; label: string }[] = [
-  { value: "detailed", label: "Detailed" },
-  { value: "summary", label: "Summary" },
-  { value: "bullets", label: "Bullets" },
-];
-
-function Sources({ result, repoUrl }: { result: QueryResult; repoUrl: string }) {
-  const [open, setOpen] = useState(false);
-  if (!result.sources.length) return null;
-  return (
-    <div className="mt-4 border-t border-border pt-3">
-      <button onClick={() => setOpen((o) => !o)} aria-expanded={open}
-              className="flex items-center gap-1.5 text-xs font-medium text-muted hover:text-text cursor-pointer">
-        <ChevronDown className={cn("size-3.5 transition-transform", open && "rotate-180")} />
-        {result.sources.length} source commits
-      </button>
-      {open && (
-        <ul className="mt-3 grid gap-2 sm:grid-cols-2">
-          {result.sources.map((s) => (
-            <li key={s.sha}>
-              <a href={`${repoUrl}/commit/${s.sha}`} target="_blank" rel="noopener noreferrer"
-                 className="block rounded-lg border border-border bg-surface-2/60 p-3 transition-colors hover:border-border-strong">
-                <div className="flex items-center gap-2 text-[11px]">
-                  <span className="font-mono font-semibold text-accent">{shortSha(s.sha)}</span>
-                  <span className="truncate text-muted">{s.author}</span>
-                  <span className="ml-auto shrink-0 text-subtle">{formatDate(s.timestamp)}</span>
-                </div>
-                <p className="mt-1.5 line-clamp-2 text-[12px] leading-snug">{s.message}</p>
-                <div className="mt-2 flex items-center gap-2 text-[11px] text-subtle">
-                  {s.pr_number && <span className="inline-flex items-center gap-1"><GitPullRequest className="size-3" />#{s.pr_number}</span>}
-                  <span className="truncate font-mono">{s.files.slice(0, 2).join(", ")}{s.files.length > 2 && ` +${s.files.length - 2}`}</span>
-                  <span className="ml-auto shrink-0 font-mono">{s.score.toFixed(2)}</span>
-                </div>
-              </a>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-function StoppedNote() {
-  return (
-    <p className="mt-3 inline-flex items-center gap-1.5 text-xs text-subtle">
-      <Square className="size-2.5 fill-current" /> You stopped this answer
-    </p>
-  );
-}
-
-function Exchange({ q, repoUrl }: { q: QueryResult; repoUrl: string }) {
-  return (
-    <div className="space-y-3 animate-fade-up">
-      <div className="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-accent px-4 py-2.5 text-[14px] text-accent-fg">
-        {q.question}
-      </div>
-      {q.search_query && (
-        // A follow-up was rewritten to stand on its own; showing it explains which commits came back
-        <p className="ml-auto w-fit max-w-[85%] text-right text-xs text-subtle">
-          Searched for: <span className="text-muted">{q.search_query}</span>
-        </p>
-      )}
-      <Card className="p-5">
-        <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-subtle">
-          <ProviderMark id={q.provider} className="size-5 text-[8px]" />
-          <span className="font-mono">{q.model}</span>
-          <span>·</span>
-          <span className="capitalize">{q.mode}</span>
-          <span className="ml-auto">{relativeTime(q.created_at)}</span>
-        </div>
-        <Markdown repoUrl={repoUrl}>{q.answer}</Markdown>
-        {q.stopped && <StoppedNote />}
-        <Sources result={q} repoUrl={repoUrl} />
-      </Card>
-    </div>
-  );
-}
-
-function ChatList({ chats, active, onSelect, onNew, onDelete, onDeleteAll, readOnly }: {
-  chats: Chat[]; active: number | null; onSelect: (id: number) => void; onNew: () => void;
-  onDelete: (chat: Chat) => void; onDeleteAll: () => void; readOnly: boolean;
-}) {
-  return (
-    <nav aria-label="Chats" className="space-y-4">
-      {!readOnly && (
-        <Button variant="secondary" className="w-full justify-start" onClick={onNew} aria-pressed={active === null}>
-          <Plus className="size-4" /> New chat
-        </Button>
-      )}
-      <div>
-        <div className="flex items-center justify-between px-2.5">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-subtle">{readOnly ? "Saved chats" : "Chats"}</p>
-          {!readOnly && chats.length > 1 && (
-            <button onClick={onDeleteAll} className="text-[11px] text-subtle hover:text-danger cursor-pointer">Delete all</button>
-          )}
-        </div>
-        {chats.length === 0 ? (
-          <p className="mt-2 px-2.5 text-[13px] text-subtle">Your chats will appear here.</p>
-        ) : (
-          <ul className="mt-2 space-y-0.5">
-            {chats.map((c) => (
-              <li key={c.id} className="group relative">
-                <button onClick={() => onSelect(c.id)} aria-current={active === c.id ? "true" : undefined}
-                        className={cn("block w-full rounded-lg py-2 pr-9 pl-2.5 text-left transition-colors cursor-pointer",
-                          active === c.id ? "bg-accent-soft text-text" : "text-muted hover:bg-surface-2 hover:text-text")}>
-                  <span className="block truncate text-[13px] font-medium">{c.title}</span>
-                  <span className="block text-[11px] text-subtle">
-                    {relativeTime(c.updated_at)} · {c.questions} {c.questions === 1 ? "question" : "questions"}
-                  </span>
-                </button>
-                {!readOnly && (
-                  <button onClick={() => onDelete(c)} aria-label={`Delete chat: ${c.title}`} title="Delete chat"
-                          className="absolute top-2 right-1.5 rounded-md p-1.5 text-subtle opacity-0 transition-opacity hover:text-danger group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 cursor-pointer">
-                    <Trash2 className="size-3.5" />
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </nav>
-  );
-}
+import { ProviderMark } from "../../../components/brand";
+import { Markdown } from "../../../components/Markdown";
+import { Button, Card, ConfirmDialog, ErrorNotice, Segmented, Skeleton } from "../../../components/ui";
+import { api, ApiError } from "../../../lib/api";
+import { useSession } from "../../../lib/auth";
+import { ChatList } from "./ChatList";
+import type { Draft } from "./Exchange";
+import { Exchange, MODES, SUGGESTIONS, StoppedNote, isAbort } from "./Exchange";
 
 export function Ask({ repo }: { repo: Repo }) {
   const { user } = useSession();

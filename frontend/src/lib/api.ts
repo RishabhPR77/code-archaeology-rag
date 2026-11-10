@@ -1,5 +1,5 @@
 import type {
-  AskMode, AuthConfig, Profile, RangePreview, Author, Chat, CoChange, Commit, GitHubRepo, GitHubStatus, HotFile, Me, Model,
+  AskMode, AuthConfig, CodeSent, Profile, SecurityEvent, TwoFactorRequired, TwoFactorSetup, RangePreview, Author, Chat, CoChange, Commit, GitHubRepo, GitHubStatus, HotFile, Me, Model,
   OriginsResult, Overview, Provider, ProviderId, PullRequest, QueryResult, Repo, RepoFile, Source, SuspectsResult,
   TimelineMatch, TimelineResult,
 } from "./types";
@@ -123,16 +123,32 @@ export const api = {
       throw e;
     }
   },
-  login: (email: string, password: string) => post<Me>("/auth/login", { email, password }),
+  login: (email: string, password: string) => post<Me | TwoFactorRequired>("/auth/login", { email, password }),
   register: (email: string, password: string, name: string) =>
-    post<Me>("/auth/register", { email, password, name }),
+    post<Me | CodeSent>("/auth/register", { email, password, name }),
   logout: () => post<void>("/auth/logout"),
   logoutEverywhere: () => post<void>("/auth/logout-everywhere"),
   demo: () => post<Me>("/auth/demo"),
   profile: () => get<Profile>("/auth/profile"),
   rename: (name: string) => request<Me>("PATCH", "/auth/me", { name }),
-  verifyEmail: (code: string) => post<Me>("/auth/verify-email", { code }),
-  resendCode: () => post<void>("/auth/resend-code"),
+  // Without a session (just after sign-up) the code is checked against `email`
+  verifyEmail: (code: string, email?: string) => post<Me>("/auth/verify-email", { code, email }),
+  resendCode: (email?: string) => post<void>("/auth/resend-code", { email }),
+  forgotPassword: (email: string) => post<void>("/auth/forgot-password", { email }),
+  resetPassword: (email: string, code: string, password: string) =>
+    post<void>("/auth/reset-password", { email, code, password }),
+  changePassword: (currentPassword: string | null, newPassword: string) =>
+    post<Me>("/auth/password", { current_password: currentPassword, new_password: newPassword }),
+  activity: () => get<SecurityEvent[]>("/auth/activity"),
+  deleteAccount: (confirmEmail: string, code?: string) =>
+    request<void>("DELETE", "/auth/me", { confirm_email: confirmEmail, code }),
+  twoFactor: {
+    verify: (code: string) => post<Me>("/auth/2fa/verify", { code }),
+    setup: () => post<TwoFactorSetup>("/auth/2fa/setup"),
+    enable: (code: string) => post<{ codes: string[] }>("/auth/2fa/enable", { code }),
+    disable: (code: string) => post<Me>("/auth/2fa/disable", { code }),
+    newRecoveryCodes: (code: string) => post<{ codes: string[] }>("/auth/2fa/recovery-codes", { code }),
+  },
 
   // GitHub App
   githubStatus: () => get<GitHubStatus>("/github/status"),

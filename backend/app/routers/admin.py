@@ -1,13 +1,14 @@
 # app/routers/admin.py
-"""Admin-only tools. For now: choosing which repositories the public demo shows."""
+"""Admin-only tools: choosing which repositories the public demo shows, and checking how the
+host passes on visitors' addresses."""
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
-from app.deps import verified_user
+from app.deps import client_ip, verified_user
 from app.models import Repo, User, utcnow
 from app.routers.repos import repo_out
 from app.schemas import RepoOut
@@ -38,3 +39,16 @@ def stop_sharing(repo_id: str, user: User = Depends(admin_user), db: Session = D
     ttl = get_settings().repo_ttl_hours
     repo.expires_at = utcnow() + timedelta(hours=ttl) if ttl > 0 else None
     db.commit()
+
+
+# Headers a proxy or CDN may use for the visitor's address
+_IP_HEADERS = ("true-client-ip", "cf-connecting-ip", "x-real-ip", "x-forwarded-for", "forwarded")
+
+
+@router.get("/request-info")
+def request_info(request: Request, _: User = Depends(admin_user)):
+    """The admin's own request as the server sees it: which address-carrying headers arrived and the
+    address the rate limiters use. Used to pick CLIENT_IP_HEADER, and to check it can't be faked."""
+    return {"client_ip": client_ip(request), "connection_ip": request.client.host if request.client else None,
+            "client_ip_header": get_settings().client_ip_header or None,
+            "headers": {h: request.headers[h] for h in _IP_HEADERS if h in request.headers}}

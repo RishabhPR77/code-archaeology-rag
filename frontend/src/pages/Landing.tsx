@@ -7,7 +7,7 @@ import { toast } from "sonner";
 
 import { AnswerPreview } from "../components/AnswerPreview";
 import { Logo, ProviderMark, ThemeToggle } from "../components/brand";
-import { ProductDemo } from "../components/ProductDemo";
+import { ProductDemo } from "../components/demo/ProductDemo";
 import { Reveal } from "../components/Reveal";
 import { Button } from "../components/ui";
 import { useMe, useStartDemo } from "../lib/auth";

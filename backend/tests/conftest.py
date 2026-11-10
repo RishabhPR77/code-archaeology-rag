@@ -25,8 +25,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from app import llm  # noqa: E402
 from app.db import Base, engine, stamp_head  # noqa: E402
-from app.deps import auth_limiter, demo_limiter, demo_total_limiter, search_limiter  # noqa: E402
-from app.routers import repos as repos_router  # noqa: E402
+from app.services import repo_context  # noqa: E402
 from app.llm.base import ModelInfo, ProviderError  # noqa: E402
 from app.main import app  # noqa: E402
 from app.services import github as github_service  # noqa: E402
@@ -72,9 +71,7 @@ def _isolate(monkeypatch):
         c.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")
     Base.metadata.create_all(engine)
     stamp_head()
-    for limiter in (auth_limiter, demo_limiter, demo_total_limiter, search_limiter):
-        limiter.hits.clear()
-    repos_router._PARSED.clear()
+    repo_context.PARSED.clear()
     llm._model_cache.clear()
     FakeProvider.calls = []
     monkeypatch.setitem(llm.PROVIDERS, "anthropic", FakeProvider())
@@ -93,7 +90,7 @@ def client():
 
 def register(client, email="dev@example.com", password="correct-horse-battery"):
     r = client.post("/api/auth/register", json={"email": email, "password": password, "name": "Dev"})
-    assert r.status_code == 201, r.text
+    assert r.status_code in (201, 202), r.text   # 202: email verification is on, a code was sent
     return r.json()
 
 

@@ -1,13 +1,16 @@
 # app/deps.py
-import threading
-import time
-from collections import defaultdict, deque
+import hashlib
+import ipaddress
+from datetime import timedelta
 
 from fastapi import Depends, HTTPException, Request, status
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.db import get_db
-from app.models import Repo, User
+from app.config import get_settings
+from app.db import SessionLocal, get_db
+from app.models import RateLimitHit, Repo, User, utcnow
+from app.schemas import as_utc
 from app.security import SESSION_COOKIE, decode_session_token
 
 
@@ -52,38 +55,81 @@ def _wait(seconds: int) -> str:
 
 
 class RateLimiter:
-    """In-process sliding window. Per instance — put a shared limiter in front if you scale out."""
+    """A sliding window: at most `limit` attempts per key in any `window_seconds`.
 
-    def __init__(self, limit: int, window_seconds: int, message: str = "Too many attempts."):
-        self.limit, self.window, self.message = limit, window_seconds, message
-        self.hits: dict[str, deque] = defaultdict(deque)
-        self.lock = threading.Lock()
+    Attempts are rows in the database rather than in this process's memory, so a restart doesn't
+    reset the count and several servers would share it. Keys are hashed before they're stored."""
+
+    def __init__(self, name: str, limit: int, window_seconds: int, message: str = "Too many attempts."):
+        self.name, self.limit, self.window, self.message = name, limit, window_seconds, message
+
+    def _key(self, key: str) -> str:
+        return hashlib.sha256(f"{self.name}|{key}".encode()).hexdigest()
+
+    def _refuse_if_full(self, db: Session, digest: str):
+        now = utcnow()
+        times = db.scalars(select(RateLimitHit.at)
+                           .where(RateLimitHit.key == digest, RateLimitHit.at > now - timedelta(seconds=self.window))
+                           .order_by(RateLimitHit.at).limit(self.limit)).all()
+        if len(times) >= self.limit:
+            retry = max(1, int((as_utc(times[0]) + timedelta(seconds=self.window) - now).total_seconds()) + 1)
+            raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS,
+                                f"{self.message} Try again in {_wait(retry)}.",
+                                headers={"Retry-After": str(retry)})
 
     def check(self, key: str):
-        now = time.monotonic()
-        with self.lock:
-            q = self.hits[key]
-            while q and now - q[0] > self.window:
-                q.popleft()
-            if len(q) >= self.limit:
-                retry = int(self.window - (now - q[0])) + 1
-                raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS,
-                                    f"{self.message} Try again in {_wait(retry)}.",
-                                    headers={"Retry-After": str(retry)})
-            q.append(now)
+        """Count this attempt, or refuse it with 429 if the window is full."""
+        digest = self._key(key)
+        with SessionLocal() as db:
+            self._refuse_if_full(db, digest)
+            db.add(RateLimitHit(key=digest, at=utcnow()))
+            db.commit()
+
+    def ensure_allowed(self, key: str):
+        """Refuse if the window is full, without counting this attempt (see `add`)."""
+        with SessionLocal() as db:
+            self._refuse_if_full(db, self._key(key))
+
+    def add(self, key: str):
+        """Count an attempt, e.g. only the failed ones."""
+        with SessionLocal() as db:
+            db.add(RateLimitHit(key=self._key(key), at=utcnow()))
+            db.commit()
 
 
-auth_limiter = RateLimiter(limit=10, window_seconds=300)
+def prune_rate_limits() -> int:
+    """Forget attempts older than any window."""
+    with SessionLocal() as db:
+        result = db.execute(delete(RateLimitHit).where(RateLimitHit.at < utcnow() - timedelta(days=1)))
+        db.commit()
+        return result.rowcount or 0
+
+
+auth_limiter = RateLimiter("auth", limit=10, window_seconds=300)
+# Wrong passwords for one account from anywhere. Per-IP limits alone can't stop guesses spread over
+# many addresses; only failures count, so the owner signing in normally is never held back.
+account_limiter = RateLimiter("account", limit=20, window_seconds=3600,
+                              message="Too many wrong passwords for this account.")
+two_factor_limiter = RateLimiter("2fa", limit=10, window_seconds=300, message="Too many codes tried.")
 # Every search embeds the question with the shared Pinecone allowance, so each account gets a fair share
-search_limiter = RateLimiter(limit=150, window_seconds=3600,
+search_limiter = RateLimiter("search", limit=150, window_seconds=3600,
                              message="That's a lot of searches in the last hour, so this one was held back.")
 
 # Demo visitors share one account; each Who broke it? search costs embedding tokens,
 # so it's capped per visitor and across all visitors
 DEMO_BUSY = "The demo has a limit on searches. Sign up free to keep going."
-demo_limiter = RateLimiter(limit=20, window_seconds=3600, message=DEMO_BUSY)
-demo_total_limiter = RateLimiter(limit=300, window_seconds=3600, message=DEMO_BUSY)
+demo_limiter = RateLimiter("demo", limit=20, window_seconds=3600, message=DEMO_BUSY)
+demo_total_limiter = RateLimiter("demo-all", limit=300, window_seconds=3600, message=DEMO_BUSY)
 
 
 def client_ip(request: Request) -> str:
+    """The visitor's address. Behind a proxy that's a header the proxy sets (CLIENT_IP_HEADER);
+    X-Forwarded-For is never used, because a visitor can put any address in it."""
+    header = get_settings().client_ip_header
+    if header:
+        value = request.headers.get(header, "").strip()
+        try:
+            return str(ipaddress.ip_address(value))
+        except ValueError:
+            pass
     return request.client.host if request.client else "unknown"

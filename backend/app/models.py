@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import (Boolean, DateTime, ForeignKey, Integer, String, Text,
+from sqlalchemy import (Boolean, DateTime, ForeignKey, Index, Integer, String, Text,
                         UniqueConstraint, false, true)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -38,6 +38,14 @@ class User(Base):
     # Every session token carries this number. Raising it ends all of the user's sessions at once,
     # which a stateless token can't do on its own ("sign out everywhere")
     session_version:  Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Two-step sign-in with an authenticator app (TOTP). The secret is encrypted like API keys.
+    # Pending: set up but not confirmed with a first code yet. Last step: the newest code used,
+    # so the same code can't be used twice. Recovery codes: HMACs of the unused ones.
+    totp_secret_enc:      Mapped[str | None] = mapped_column(Text)
+    totp_pending_enc:     Mapped[str | None] = mapped_column(Text)
+    totp_enabled_at:      Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    totp_last_step:       Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    recovery_codes_json:  Mapped[str | None] = mapped_column(Text)
     created_at:       Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     credentials: Mapped[list["ProviderCredential"]] = relationship(
@@ -83,6 +91,8 @@ class Repo(Base):
     created_at:    Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     ready_at:      Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     expires_at:    Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Starts of this ingest; a restart resumes it, but not forever (a repo that crashes the server would loop)
+    ingest_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     user:    Mapped[User] = relationship(back_populates="repos")
     data:    Mapped["RepoData | None"] = relationship(cascade="all, delete-orphan", lazy="select")
@@ -132,17 +142,46 @@ class Query(Base):
     created_at:   Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
-class EmailVerification(Base):
-    """The pending sign-up code for a user. Only an HMAC of the code is stored."""
-    __tablename__ = "email_verifications"
+class EmailCode(Base):
+    """A six-digit code emailed to a user: confirming their address ("verify") or resetting their
+    password ("reset"). "notice" rows only throttle the "you already have an account" email.
+    Only an HMAC of the code is stored."""
+    __tablename__ = "email_codes"
+    __table_args__ = (UniqueConstraint("user_id", "purpose"),)
 
-    user_id:         Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    id:              Mapped[int] = mapped_column(primary_key=True)
+    user_id:         Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    purpose:         Mapped[str] = mapped_column(String(16))
     code_hash:       Mapped[str] = mapped_column(String(64))
     expires_at:      Mapped[datetime] = mapped_column(DateTime(timezone=True))
     attempts:        Mapped[int] = mapped_column(Integer, default=0)
     last_sent_at:    Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     sends_in_window: Mapped[int] = mapped_column(Integer, default=1)
     window_started:  Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RateLimitHit(Base):
+    """One attempt counted by a rate limiter. Kept in the database, not in memory, so limits survive
+    a restart and every server shares them. The key is a hash: no raw IPs or emails are stored."""
+    __tablename__ = "rate_limit_hits"
+    __table_args__ = (Index("ix_rate_limit_hits_key_at", "key", "at"),)
+
+    id:  Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(64))
+    at:  Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class SecurityEvent(Base):
+    """What happened to an account and roughly where from, shown to its owner under Security activity."""
+    __tablename__ = "security_events"
+
+    id:         Mapped[int] = mapped_column(primary_key=True)
+    user_id:    Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    kind:       Mapped[str] = mapped_column(String(40))
+    detail:     Mapped[str] = mapped_column(String(200), default="")
+    ip:         Mapped[str] = mapped_column(String(64), default="")      # shortened, e.g. 203.0.113.x
+    device:     Mapped[str] = mapped_column(String(120), default="")     # e.g. Chrome on Windows
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 
 class IngestEvent(Base):

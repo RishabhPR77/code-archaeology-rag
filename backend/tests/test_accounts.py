@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from app.config import get_settings
 from app.db import SessionLocal
-from app.models import EmailVerification, User, utcnow
+from app.models import EmailCode, User, utcnow
 from app.security import SESSION_COOKIE, decrypt_secret
 from app.services import github, mailer, oauth
 from app.services import ingest as ingest_service
@@ -113,70 +113,169 @@ def _user(email):
 
 
 # ── Email verification ────────────────────────────────────────────
-def test_sign_up_requires_the_emailed_code(client, codes):
-    me = register(client, email="new@example.com")
-    assert me["user"]["email_verified"] is False
-    assert 55 <= me["user"]["code_resend_in"] <= 60                # a code was just sent
-    assert codes and codes[0][0] == "new@example.com" and len(codes[0][1]) == 6
-    assert client.get("/api/providers").status_code == 403          # gated until verified
-    assert client.get("/api/auth/me").status_code == 200            # but can see who they are
+def _code_record(email, purpose="verify"):
+    with SessionLocal() as db:
+        return db.scalar(select(EmailCode).where(EmailCode.user_id == _user(email).id, EmailCode.purpose == purpose))
 
-    wrong = "000000" if codes[0][1] != "000000" else "111111"
-    r = client.post("/api/auth/verify-email", json={"code": wrong})
-    assert r.status_code == 400 and "4 attempts left" in r.json()["detail"]
-    r = client.post("/api/auth/verify-email", json={"code": codes[0][1]})
+
+def _age_code(email, purpose="verify"):
+    """Pretend the last code went out two minutes ago, past the resend cooldown."""
+    with SessionLocal() as db:
+        rec = db.scalar(select(EmailCode).where(EmailCode.user_id == _user(email).id, EmailCode.purpose == purpose))
+        rec.last_sent_at = utcnow() - timedelta(minutes=2)
+        db.commit()
+
+
+def _wrong(code):
+    return "000000" if code != "000000" else "111111"
+
+
+def test_sign_up_emails_a_code_and_the_code_signs_in(client, codes):
+    r = client.post("/api/auth/register", json={"email": "new@example.com", "password": "a-good-passphrase"})
+    assert r.status_code == 202 and r.json() == {"email": "new@example.com", "resend_in": 60}
+    assert not client.cookies.get(SESSION_COOKIE)                     # no session until the address is proved
+    assert client.get("/api/auth/me").status_code == 401
+    assert codes and codes[0][0] == "new@example.com" and len(codes[0][1]) == 6
+
+    r = client.post("/api/auth/verify-email", json={"email": "new@example.com", "code": _wrong(codes[0][1])})
+    assert r.status_code == 400 and "didn't work" in r.json()["detail"]
+    r = client.post("/api/auth/verify-email", json={"email": "new@example.com", "code": codes[0][1]})
     assert r.status_code == 200 and r.json()["user"]["email_verified"] is True
-    assert client.get("/api/providers").status_code == 200
+    assert client.get("/api/providers").status_code == 200            # signed in and verified
+
+
+def test_sign_up_reply_is_identical_for_an_existing_account(client, codes, monkeypatch):
+    """Sign-up must not reveal which addresses have accounts. The owner is emailed instead."""
+    notices = []
+    monkeypatch.setattr(mailer, "send_account_exists", lambda to: notices.append(to))
+    register(client, email="taken@example.com", password="owners-real-pass")
+    client.post("/api/auth/verify-email", json={"email": "taken@example.com", "code": codes[-1][1]})
+    client.post("/api/auth/logout")
+
+    fresh = client.post("/api/auth/register", json={"email": "free@example.com", "password": "anything-goes-1"})
+    again = client.post("/api/auth/register", json={"email": "TAKEN@example.com", "password": "attackers-pass-1"})
+    assert again.status_code == fresh.status_code == 202
+    assert again.json() == {"email": "taken@example.com", "resend_in": 60}
+    assert set(again.json()) == set(fresh.json())
+    assert not client.cookies.get(SESSION_COOKIE)
+    assert notices == ["taken@example.com"]
+    # The existing password is untouched
+    assert client.post("/api/auth/login", json={"email": "taken@example.com",
+                                                "password": "attackers-pass-1"}).status_code == 401
+    assert client.post("/api/auth/login", json={"email": "taken@example.com",
+                                                "password": "owners-real-pass"}).status_code == 200
+
+
+def test_codes_for_unknown_or_verified_addresses_fail_like_wrong_codes(client, codes):
+    register(client, email="done@example.com")
+    client.post("/api/auth/verify-email", json={"email": "done@example.com", "code": codes[-1][1]})
+    client.post("/api/auth/logout")
+    messages = {client.post("/api/auth/verify-email", json={"email": e, "code": "123456"}).json()["detail"]
+                for e in ("nobody@example.com", "done@example.com")}
+    assert len(messages) == 1 and "didn't work" in messages.pop()
+    # Resending to an unknown address looks exactly like resending to a real one
+    assert client.post("/api/auth/resend-code", json={"email": "nobody@example.com"}).status_code == 204
 
 
 def test_code_is_stored_hashed_and_expires(client, codes):
     register(client, email="new@example.com")
+    rec = _code_record("new@example.com")
+    assert codes[0][1] not in rec.code_hash and len(rec.code_hash) == 64
     with SessionLocal() as db:
-        rec = db.get(EmailVerification, _user("new@example.com").id)
-        assert codes[0][1] not in rec.code_hash
-        rec.expires_at = utcnow() - timedelta(seconds=1)
+        db.get(EmailCode, rec.id).expires_at = utcnow() - timedelta(seconds=1)
         db.commit()
-    r = client.post("/api/auth/verify-email", json={"code": codes[0][1]})
-    assert r.status_code == 400 and "expired" in r.json()["detail"]
+    r = client.post("/api/auth/verify-email", json={"email": "new@example.com", "code": codes[0][1]})
+    assert r.status_code == 400 and "didn't work" in r.json()["detail"]
 
 
 def test_wrong_code_limit_and_resend_rules(client, codes):
-    register(client, email="new@example.com")
+    register(client, email="new@example.com", password="a-good-passphrase")
     for _ in range(5):
-        client.post("/api/auth/verify-email", json={"code": "999999" if codes[0][1] != "999999" else "888888"})
-    r = client.post("/api/auth/verify-email", json={"code": codes[0][1]})
-    assert r.status_code == 400 and "Too many" in r.json()["detail"]   # even the right code is dead now
+        client.post("/api/auth/verify-email", json={"email": "new@example.com", "code": _wrong(codes[0][1])})
+    r = client.post("/api/auth/verify-email", json={"email": "new@example.com", "code": codes[0][1]})
+    assert r.status_code == 400                                        # even the right code is dead now
 
-    assert client.post("/api/auth/resend-code").status_code == 429      # 60s cooldown
-    uid = _user("new@example.com").id
-    with SessionLocal() as db:
-        db.get(EmailVerification, uid).last_sent_at = utcnow() - timedelta(minutes=2)
-        db.commit()
-    assert client.get("/api/auth/me").json()["user"]["code_resend_in"] == 0   # reload shows no wait
+    # Signed in with the password (still unverified), resending shows the real cooldown
+    client.post("/api/auth/login", json={"email": "new@example.com", "password": "a-good-passphrase"})
+    assert client.get("/api/auth/me").json()["user"]["email_verified"] is False
+    assert client.post("/api/auth/resend-code").status_code == 429     # 60s cooldown
+    _age_code("new@example.com")
+    assert client.get("/api/auth/me").json()["user"]["code_resend_in"] == 0
     for _ in range(4):
-        with SessionLocal() as db:
-            db.get(EmailVerification, uid).last_sent_at = utcnow() - timedelta(minutes=2)
-            db.commit()
+        _age_code("new@example.com")
         assert client.post("/api/auth/resend-code").status_code == 204
-    with SessionLocal() as db:
-        db.get(EmailVerification, uid).last_sent_at = utcnow() - timedelta(minutes=2)
-        db.commit()
+    _age_code("new@example.com")
     r = client.post("/api/auth/resend-code")
-    assert r.status_code == 429 and "an hour" in r.json()["detail"]     # 5 sends per hour
+    assert r.status_code == 429 and "an hour" in r.json()["detail"]   # 5 sends per hour
     assert client.post("/api/auth/verify-email", json={"code": codes[-1][1]}).status_code == 200
 
 
 def test_unclaimed_sign_up_does_not_lock_out_the_real_owner(client, codes):
     register(client, email="victim@example.com", password="squatter-pass-1")
-    client.post("/api/auth/logout")
-    me = register(client, email="victim@example.com", password="owners-real-pass")
-    assert me["user"]["email_verified"] is False
-    client.post("/api/auth/verify-email", json={"code": codes[-1][1]})
+    _age_code("victim@example.com")
+    register(client, email="victim@example.com", password="owners-real-pass")
+    r = client.post("/api/auth/verify-email", json={"email": "victim@example.com", "code": codes[-1][1]})
+    assert r.status_code == 200 and r.json()["user"]["email_verified"] is True
     client.post("/api/auth/logout")
     assert client.post("/api/auth/login", json={"email": "victim@example.com",
                                                 "password": "squatter-pass-1"}).status_code == 401
-    r = client.post("/api/auth/register", json={"email": "victim@example.com", "password": "another-pass"})
-    assert r.status_code == 409                                        # verified accounts are protected
+    assert client.post("/api/auth/login", json={"email": "victim@example.com",
+                                                "password": "owners-real-pass"}).status_code == 200
+
+
+# ── Forgotten password ────────────────────────────────────────────
+@pytest.fixture
+def resets(monkeypatch, codes):
+    sent = []
+    monkeypatch.setattr(mailer, "send_reset_code", lambda to, code, minutes: sent.append((to, code)))
+    return sent
+
+
+def _verified_account(client, codes, email="me@example.com", password="original-pass-1"):
+    register(client, email=email, password=password)
+    client.post("/api/auth/verify-email", json={"email": email, "code": codes[-1][1]})
+
+
+def test_password_reset_with_an_emailed_code(client, codes, resets):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    _verified_account(client, codes)
+    with TestClient(app) as other_device:
+        other_device.post("/api/auth/login", json={"email": "me@example.com", "password": "original-pass-1"})
+        assert other_device.get("/api/auth/me").status_code == 200
+
+        assert client.post("/api/auth/forgot-password", json={"email": "ME@example.com"}).status_code == 204
+        assert resets and resets[0][0] == "me@example.com"
+        bad = client.post("/api/auth/reset-password", json={"email": "me@example.com", "code": _wrong(resets[0][1]),
+                                                            "password": "brand-new-pass-2"})
+        assert bad.status_code == 400
+        r = client.post("/api/auth/reset-password", json={"email": "me@example.com", "code": resets[0][1],
+                                                          "password": "brand-new-pass-2"})
+        assert r.status_code == 204
+        assert other_device.get("/api/auth/me").status_code == 401      # every old session ended
+    assert client.post("/api/auth/login", json={"email": "me@example.com",
+                                                "password": "original-pass-1"}).status_code == 401
+    assert client.post("/api/auth/login", json={"email": "me@example.com",
+                                                "password": "brand-new-pass-2"}).status_code == 200
+    # The code is used up
+    again = client.post("/api/auth/reset-password", json={"email": "me@example.com", "code": resets[0][1],
+                                                          "password": "third-pass-3x"})
+    assert again.status_code == 400
+
+
+def test_forgot_password_says_the_same_for_unknown_addresses(client, codes, resets):
+    assert client.post("/api/auth/forgot-password", json={"email": "nobody@example.com"}).status_code == 204
+    assert resets == []
+
+
+def test_login_gives_one_message_for_every_failure(client, web):
+    oauth_round_trip(client, "google")                                 # an account with no password
+    client.post("/api/auth/logout")
+    register(client, email="pw@example.com")
+    client.post("/api/auth/logout")
+    details = {client.post("/api/auth/login", json={"email": e, "password": "not-the-password"}).json()["detail"]
+               for e in ("ada@example.com", "pw@example.com", "nobody@example.com")}
+    assert details == {"Incorrect email or password."}
 
 
 def test_brevo_request_shape(client, web, monkeypatch):

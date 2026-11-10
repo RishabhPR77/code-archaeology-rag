@@ -24,6 +24,7 @@ from storage.vector_store import VectorStore
 log = logging.getLogger(__name__)
 
 TERMINAL = {"ready", "failed"}
+MAX_ATTEMPTS = 3
 _slots = threading.BoundedSemaphore(get_settings().max_concurrent_ingests)
 
 
@@ -65,6 +66,8 @@ def run_ingest(repo_id: str):
         url, full_name, namespace, max_commits = repo.url, repo.full_name, repo.namespace, repo.max_commits
         skip = repo.skip_commits or 0
         private = repo.is_private
+        repo.ingest_attempts = (repo.ingest_attempts or 0) + 1
+        db.commit()
     api_token = user_token or settings.github_token or None
 
     _update(repo_id, status="queued", stage_message="Waiting for a free ingest slot", error=None)
@@ -130,6 +133,7 @@ def run_ingest(repo_id: str):
                 repo.commit_count = len(chunks)
                 repo.pr_count = len({c["metadata"]["pr_number"] for c in chunks if c["metadata"]["pr_number"]})
                 repo.ready_at = utcnow()
+                repo.ingest_attempts = 0
                 if settings.repo_ttl_hours > 0:
                     repo.expires_at = utcnow() + timedelta(hours=settings.repo_ttl_hours)
                 db.commit()
@@ -150,14 +154,25 @@ def run_ingest(repo_id: str):
             _rmtree(tmp)
 
 
-def mark_interrupted():
-    """On startup, jobs that were mid-flight when the server stopped can't resume."""
+def resume_interrupted() -> list[str]:
+    """On start-up, restart ingests that were running when the server stopped. Their state is in the
+    database, so nothing is lost. After MAX_ATTEMPTS starts a job is failed instead: a repository that
+    crashes the server (say, by running it out of memory) mustn't put it in a restart loop."""
+    resume = []
     with SessionLocal() as db:
         for repo in db.query(Repo).filter(Repo.status.notin_(TERMINAL)):
-            repo.status = "failed"
-            repo.stage_message = "Failed"
-            repo.error = "Ingestion was interrupted by a server restart. Use Re-sync to try again."
+            if (repo.ingest_attempts or 0) >= MAX_ATTEMPTS:
+                repo.status, repo.stage_message = "failed", "Failed"
+                repo.error = ("Ingestion stopped part-way several times. Use Re-sync to try again, "
+                              "or add fewer commits.")
+            else:
+                repo.status, repo.stage_message, repo.error = "queued", "Restarting after a server restart", None
+                resume.append(repo.id)
         db.commit()
+    for repo_id in resume:
+        log.info("Resuming the ingest of %s after a restart", repo_id)
+        threading.Thread(target=run_ingest, args=(repo_id,), daemon=True, name=f"ingest-{repo_id[:8]}").start()
+    return resume
 
 
 def delete_repo_data(repo: Repo):
