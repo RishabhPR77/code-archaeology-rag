@@ -15,7 +15,7 @@ You bring your own model: connect an **Anthropic, OpenAI, Google Gemini, Groq or
 - **Measured search quality.** On 583 questions taken from three open-source repositories, the right commit is among the 8 the model reads for **81–89%** of them, up from 65–79% before the search was rebuilt. An automatic [accuracy check](#accuracy) found the bug that was holding it back.
 - **Answers stream in** word by word, with a **Stop** button that keeps what was written.
 - **Finds what broke.** Bug origins traces each bug fix back to the commit that introduced it, and **Who broke it?** ranks likely culprits for a new bug report. On 49 real bug reports from Flask, Click and HTTPX, the commit that caused the bug is in its top 3 for **57%**, nine times as often as checking the newest commits, and in the range of published research for the same task.
-- **Built to run for free and safely:** five LLM providers with each user's own encrypted key, GitHub and Google sign-in, 168 tests and a linter in GitHub Actions CI, deployed on Render, Neon and Pinecone.
+- **Built to run for free and safely:** five LLM providers with each user's own encrypted key, GitHub and Google sign-in with optional two-step verification, 204 tests, linters and dependency scans in GitHub Actions CI, deployed on Render, Neon and Pinecone.
 
 ![Asking pallets/flask why app.query was added: it searches the history, finds the commits, and the answer streams in with citations](docs/screenshots/ask-streaming.gif)
 
@@ -76,7 +76,7 @@ Code Archaeologist makes that history answerable:
 | **Any slice of history** | Ingest the latest commits, or a range further back, such as commits 500 to 700. Drag it on a slider over the whole history or type it in, and the dialog shows the first and last commit of the range (date and message) before you start. |
 | **Repositories and profile** | The dashboard lists your repositories as cards with live ingest progress, and deletes one in a click. Your profile shows your details, how you sign in, and your activity: repositories, commits indexed, questions asked and your latest questions, each one link away from its chat. |
 | **Live demo** | Anyone can open a sample repository without signing up. It's a shared, read-only account: visitors browse the analytics and saved chats, rank suspects and trace files, but every change is refused by the server, and searches are rate-limited per visitor. An admin picks the repository from its page (**Use as public demo**) and can stop sharing it from Settings. |
-| **Accounts** | Email and password sign-up with a 6-digit email code, plus **Continue with Google** and **Continue with GitHub**. Every repository, key and answer is private to its owner. |
+| **Accounts** | Email and password sign-up with a 6-digit email code, plus **Continue with Google** and **Continue with GitHub**. Forgot password, change password, optional **two-step sign-in** with an authenticator app and recovery codes, a **security activity** log, and **delete account**. Every repository, key and answer is private to its owner. |
 | **Private repositories** | Through a GitHub App, users pick which of their repositories to share. Access is read-only and can be changed on GitHub at any time. |
 
 ![Repository overview](docs/screenshots/overview.jpg)
@@ -336,14 +336,20 @@ To turn on **Continue with GitHub**, **Continue with Google** or **email codes**
 
 - **API keys** are verified with the provider, encrypted at rest with Fernet and only ever decrypted server-side for a call. They are never returned to the browser; the UI sees a short hint such as `sk-a…9f2c`, and only for long keys.
 - **Sessions** are signed JWTs in an `httpOnly`, `SameSite=Lax` cookie (`Secure` in production). They are never readable by JavaScript. Each token carries the account's session version, so **Sign out everywhere** (Settings) ends every session on every device at once, which a plain JWT can't do.
-- **Passwords** are hashed with bcrypt. Sign-in, sign-up and code checks are rate-limited per IP.
+- **Passwords** are hashed with bcrypt, and the most common passwords are refused. Sign-in always runs the bcrypt check, even for unknown emails, so timing reveals nothing.
+- **No account enumeration.** Sign-up, "resend code" and "forgot password" reply the same way whether or not an email has an account; the owner is told by email instead, and login has one error message.
+- **Two-step sign-in** (optional): a TOTP code from an authenticator app after the password, Google or GitHub, with ten single-use recovery codes. A code can't be replayed, and the half-signed-in token can never act as a session.
+- **Password reset and changes** use a 6-digit emailed code; resetting or changing the password ends every other session, and each sensitive change sends an alert email. A **security activity** log shows sign-ins, failed attempts and changes, with shortened IP addresses.
+- **Rate limits** live in the database (keys are hashed, so no raw IPs or emails are stored), so they survive restarts and would be shared by several servers. Wrong passwords are also limited per account, from any IP. The visitor's IP comes from the header the host's proxy sets, never from `X-Forwarded-For`, which visitors can fake to dodge per-IP limits.
+- **Key rotation.** Session tokens name the key that signed them, and stored secrets use MultiFernet, so `SECRET_KEY` and `ENCRYPTION_KEY` can be changed without signing anyone out; secrets are re-encrypted on start-up.
 - **Fair use.** Searches (Ask and Who broke it?) are capped per account per hour, since each one uses the server's embedding allowance; the demo has tighter per-visitor and overall caps.
 - **OAuth** flows use `state` plus PKCE. A Google or GitHub sign-in that claims an email address whose password account was never verified removes that unverified password, which blocks account pre-hijacking.
 - **GitHub access** is a GitHub App with read-only permissions on the repositories each user picks. Tokens are encrypted at rest and refreshed before they expire.
 - **Isolation.** Every repository, vector namespace, key and saved answer belongs to one user. Other users get a `404`.
 - **Model output** is rendered as Markdown without raw HTML, so content from commits or models can't inject markup.
 - **Provider errors** never surface as `401`, so a bad API key can't be mistaken for an expired session.
-- **Responses** carry a Content-Security-Policy that only lets the site's own scripts run (the one inline script in `index.html` is allowed by the hash of its exact text, computed at startup), `X-Frame-Options: DENY` and `frame-ancestors 'none'` against clickjacking, HSTS in production, `X-Content-Type-Options: nosniff` and a strict referrer policy.
+- **Responses** carry a Content-Security-Policy that only lets the site's own scripts run (the one inline script in `index.html` is allowed by the hash of its exact text, computed at startup), `X-Frame-Options: DENY` and `frame-ancestors 'none'` against clickjacking, HSTS in production, `X-Content-Type-Options: nosniff` and a strict referrer policy. Changes sent from another site's page are refused by an Origin check, on top of `SameSite` cookies.
+- **Dependencies** are scanned on every push (pip-audit and npm audit), and Dependabot opens weekly update pull requests.
 
 ## API
 
@@ -380,9 +386,11 @@ cd backend
 python -m pytest
 ```
 
-There are 168 tests. GitHub Actions lints the backend with ruff (rules in [`backend/ruff.toml`](backend/ruff.toml)), runs the tests, and type-checks and builds the frontend, on every push to `main` and every pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests replace the embedding model with a small stand-in, so CI installs only `requirements.txt`, without torch.
+There are 194 backend tests and 10 frontend tests. GitHub Actions lints the backend with ruff (rules in [`backend/ruff.toml`](backend/ruff.toml)) and runs pytest, lints the frontend with ESLint and runs its Vitest component tests, type-checks and builds it, and scans both for known vulnerabilities, on every push to `main` and every pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests replace the embedding model with a small stand-in, so CI installs only `requirements.txt`, without torch.
 
 - **Auth:** sessions, cookie flags, rate limiting, admin handling, and signing out everywhere ending sessions on other devices.
+- **Account security:** two-step sign-in (codes, replay, recovery codes, Google sign-in), identical replies for registered and unknown emails, password reset and change ending other sessions, weak passwords refused, key rotation for sessions and stored secrets, per-account limits on wrong passwords from many IPs, `X-Forwarded-For` ignored, cross-site writes refused, the activity log, account deletion, and ingests resuming after a restart.
+- **Frontend:** password rules and the confirm field, model output never rendering HTML, and the two-step sign-in screen.
 - **Commit ranges:** a range clones deep enough to reach it, reads exactly that window, keeps it on re-sync, and can't reach back further than 5,000 commits; pull requests newer than the range don't use up the pull request budget; the preview reads the commit count from GitHub's paging and stops at the oldest commit.
 - **Profile:** activity counts and the latest questions, renaming, and blank names refused.
 - **Demo:** only admins can share, and only public, ready repositories; visitors see the shared repository and its chats, every write is refused (including adding a key or deleting a chat), searches are capped per visitor, the demo account can't be signed into or claimed, and signing in with GitHub from the demo makes a real account instead of linking GitHub to the shared one.
