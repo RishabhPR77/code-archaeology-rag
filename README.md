@@ -85,7 +85,7 @@ Code Archaeologist makes that history answerable:
 
 *Every answer lists the commits it was built from, each linked to GitHub.*
 
-![Bug origins for pallets/flask: 21 bug fixes, 14 traced to a likely cause, a median of 867 days from cause to fix, and the commits behind several fixes](docs/screenshots/bug-origins.jpg)
+![Bug origins for the last 500 commits of pallets/flask: 81 bug fixes, 53 traced to a likely cause, a median of 161 days from cause to fix, and the commits behind several fixes](docs/screenshots/bug-origins.jpg)
 
 *Bug origins traces each fix back to the commit that most likely caused it, and flags commits that needed several fixes.*
 
