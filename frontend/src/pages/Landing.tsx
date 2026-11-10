@@ -3,12 +3,14 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link } from "react-router";
+import { toast } from "sonner";
 
 import { AnswerPreview } from "../components/AnswerPreview";
 import { Logo, ProviderMark, ThemeToggle } from "../components/brand";
 import { ProductDemo } from "../components/ProductDemo";
 import { Button } from "../components/ui";
-import { useMe } from "../lib/auth";
+import { useMe, useStartDemo } from "../lib/auth";
+import { useAuthConfig } from "../lib/queries";
 import type { ProviderId } from "../lib/types";
 import { PROVIDER_NAMES } from "../lib/utils";
 
@@ -37,7 +39,11 @@ const PROVIDERS: ProviderId[] = ["anthropic", "openai", "gemini", "groq", "openr
 
 export function Landing() {
   const { data: me } = useMe();
-  const signedIn = !!me;
+  const { data: config } = useAuthConfig();
+  const startDemo = useStartDemo();
+  const inDemo = !!me?.user.is_demo;
+  const signedIn = !!me && !inDemo;   // signed in to an account of their own
+  const demoAvailable = !signedIn && (inDemo || !!config?.demo_available);
 
   return (
     <div className="min-h-full overflow-x-hidden">
@@ -72,17 +78,43 @@ export function Landing() {
               Connect a GitHub repository and ask about it in plain English. Answers come from its commits,
               pull requests and code reviews, with links to the sources.
             </p>
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Link to={signedIn ? "/app" : "/register"}>
-                <Button size="lg" className="w-full sm:w-auto">{signedIn ? "Open your workspace" : "Start for free"} <ArrowRight className="size-4" /></Button>
-              </Link>
-              <a href="#demo">
-                <Button size="lg" variant="outline" className="w-full sm:w-auto"><PlayCircle className="size-4" /> Watch the demo</Button>
-              </a>
-            </div>
-            <p className="mt-6 text-[13px] text-subtle">
-              Uses your own API key from Anthropic, OpenAI, Gemini, Groq or OpenRouter.
-            </p>
+            {demoAvailable ? (
+              <>
+                <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+                  {inDemo ? (
+                    <Link to="/app">
+                      <Button size="lg" className="w-full sm:w-auto">Back to the demo <ArrowRight className="size-4" /></Button>
+                    </Link>
+                  ) : (
+                    <Button size="lg" className="w-full sm:w-auto" loading={startDemo.isPending}
+                            onClick={() => startDemo.mutate(undefined, { onError: (e) => toast.error(e.message) })}>
+                      Try the live demo <ArrowRight className="size-4" />
+                    </Button>
+                  )}
+                  <Link to="/register">
+                    <Button size="lg" variant="outline" className="w-full sm:w-auto">Start for free</Button>
+                  </Link>
+                </div>
+                <p className="mt-6 text-[13px] text-subtle">
+                  The demo opens a sample repository with no sign-up. Your own account uses your own API key
+                  from Anthropic, OpenAI, Gemini, Groq or OpenRouter.
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+                  <Link to={signedIn ? "/app" : "/register"}>
+                    <Button size="lg" className="w-full sm:w-auto">{signedIn ? "Open your workspace" : "Start for free"} <ArrowRight className="size-4" /></Button>
+                  </Link>
+                  <a href="#demo">
+                    <Button size="lg" variant="outline" className="w-full sm:w-auto"><PlayCircle className="size-4" /> Watch the demo</Button>
+                  </a>
+                </div>
+                <p className="mt-6 text-[13px] text-subtle">
+                  Uses your own API key from Anthropic, OpenAI, Gemini, Groq or OpenRouter.
+                </p>
+              </>
+            )}
           </div>
           <div className="min-w-0 rounded-3xl bg-accent-soft p-3 sm:p-6">
             <AnswerPreview />

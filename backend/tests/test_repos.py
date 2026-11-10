@@ -121,6 +121,13 @@ def test_timeline(user_client):
     assert empty["entries"] == [] and empty["answer"] is None
 
 
+def test_timeline_lists_commits_without_a_model(user_client):
+    rid = _ready_repo(user_client)["id"]
+    r = user_client.post(f"/api/repos/{rid}/timeline", json={"path": "sessions.py"}).json()
+    assert [e["sha"] for e in r["entries"]] == ["a1b2c3d", "b2c3d4e"]
+    assert r["answer"] is None and r["provider"] is None and r["model"] is None
+
+
 def test_file_list_and_exact_or_folder_timeline(user_client):
     rid = _ready_repo(user_client)["id"]
     _connect_model(user_client)

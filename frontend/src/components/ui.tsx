@@ -226,15 +226,15 @@ export function Dialog({ open, onClose, title, description, children, className 
   );
 }
 
-export function ConfirmDialog({ open, onClose, onConfirm, title, description, confirmLabel, loading }: {
+export function ConfirmDialog({ open, onClose, onConfirm, title, description, confirmLabel, loading, danger = true }: {
   open: boolean; onClose: () => void; onConfirm: () => void; title: string; description: ReactNode;
-  confirmLabel: string; loading?: boolean;
+  confirmLabel: string; loading?: boolean; danger?: boolean;
 }) {
   return (
     <Dialog open={open} onClose={onClose} title={title} description={description}>
       <div className="flex justify-end gap-2">
         <Button variant="secondary" onClick={onClose}>Cancel</Button>
-        <Button variant="danger" onClick={onConfirm} loading={loading}>{confirmLabel}</Button>
+        <Button variant={danger ? "danger" : "primary"} onClick={onConfirm} loading={loading}>{confirmLabel}</Button>
       </div>
     </Dialog>
   );

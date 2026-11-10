@@ -50,6 +50,7 @@ class UserOut(BaseModel):
     google_linked:    bool
     has_password:     bool
     is_admin:        bool
+    is_demo:         bool = False      # the shared, read-only demo account
     active_provider: str | None
     active_model:    str | None
     created_at:      datetime
@@ -76,6 +77,7 @@ class AuthConfigOut(BaseModel):
     google_enabled:     bool
     email_verification: bool
     contact_email:      str | None
+    demo_available:     bool = False   # a sample repository can be explored without signing up
 
 
 # ── GitHub ─────────────────────────────────────────────────────────

@@ -145,10 +145,11 @@ def ask(question: str, namespace: str, generate: Generate, mode: str = "detailed
     return {"answer": answer, "sources": p["sources"], "search_query": p["search_query"]}
 
 
-def timeline(filename: str, chunks: list[dict], generate: Generate, match: str = "contains") -> dict:
+def timeline(filename: str, chunks: list[dict], generate: Generate | None, match: str = "contains") -> dict:
+    """The file's commits, oldest first, with a written summary when a model is connected."""
     entries = analytics.file_timeline(chunks, filename, match)
-    if not entries:
-        return {"answer": None, "entries": []}
+    if not entries or generate is None:
+        return {"answer": None, "entries": entries}
 
     lines = [f"[{i}] {e['timestamp'][:10]} · `{e['sha']}` · {e['author']} · {e['type']}\n    {e['message'][:160]}"
              for i, e in enumerate(entries, 1)]

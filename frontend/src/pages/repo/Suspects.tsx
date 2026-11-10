@@ -84,8 +84,9 @@ export function Suspects({ repo }: { repo: Repo }) {
             <Button type="submit" loading={find.isPending} disabled={description.trim().length < 10}>Find suspects</Button>
           </div>
           <p className="text-xs text-subtle">
-            Commits are ranked by how well they match your report, whether they changed files it names, and whether
-            they caused earlier bugs. With a date, only commits from that day on are considered.
+            Commits are ranked by how well they match your report, whether they changed the files or code it names,
+            how big they were, and whether they caused earlier bugs. Changes to only docs or tests are left out. With
+            a date, only commits from that day on are considered.
           </p>
         </form>
       </Card>
@@ -129,6 +130,11 @@ export function Suspects({ repo }: { repo: Repo }) {
                               )} />
                   <div className="p-5"><Markdown repoUrl={repo.url}>{result.answer}</Markdown></div>
                 </Card>
+              ) : user.is_demo ? (
+                <p className="rounded-lg border border-border bg-surface-2 px-4 py-3 text-[13px] text-muted">
+                  The ranking above needs no model. With your own account and API key, your model also explains
+                  each suspect. <Link to="/register" className="font-medium text-text underline">Sign up free</Link>
+                </p>
               ) : !hasModel && (
                 <div className="rounded-lg border border-warning/25 bg-warning-soft px-4 py-3 text-[13px] text-warning">
                   Connect a model to get an explanation of each suspect. <Link to="/app/settings" className="font-medium underline">Open settings</Link>

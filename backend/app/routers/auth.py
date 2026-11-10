@@ -15,7 +15,7 @@ from app.models import User
 from app.schemas import AuthConfigOut, LoginIn, MeOut, RegisterIn, VerifyEmailIn
 from app.security import (SESSION_COOKIE, create_session_token, decode_session_token,
                           hash_password, session_cookie_kwargs, verify_password)
-from app.services import github, oauth, verification
+from app.services import demo, github, oauth, verification
 from app.services.users import limits_for, sync_admin_flag, user_out
 
 log = logging.getLogger(__name__)
@@ -50,11 +50,23 @@ def _claim_unverified(user: User):
 
 
 @router.get("/config", response_model=AuthConfigOut)
-def auth_config():
+def auth_config(db: Session = Depends(get_db)):
     s = get_settings()
     return AuthConfigOut(github_enabled=s.github_oauth_enabled, google_enabled=s.google_oauth_enabled,
                          email_verification=s.email_verification_enabled,
-                         contact_email=s.contact_email or None)
+                         contact_email=s.contact_email or None, demo_available=bool(demo.demo_repos(db)))
+
+
+# ── Demo ───────────────────────────────────────────────────────────
+@router.post("/demo", response_model=MeOut)
+def demo_login(request: Request, response: Response, db: Session = Depends(get_db)):
+    """Sign in to the shared, read-only demo account. No password: it can't change anything."""
+    auth_limiter.check(f"demo:{client_ip(request)}")
+    user = demo.demo_user(db)
+    if user is None or not demo.demo_repos(db):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "The demo isn't available right now")
+    _start_session(response, user)
+    return _me(db, user)
 
 
 # ── Email + password ───────────────────────────────────────────────
@@ -163,6 +175,8 @@ def github_callback(request: Request, code: str = "", state: str = "", error: st
 
     owner = db.scalar(select(User).where(User.github_id == profile["id"]))
     current = _session_user(request, db)
+    if current is not None and current.is_demo:
+        current = None   # leaving the demo for a real account, never linking GitHub to the shared one
     if current is not None:
         # Signed in already: this connects GitHub to the current account
         if owner is not None and owner.id != current.id:

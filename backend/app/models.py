@@ -32,6 +32,8 @@ class User(Base):
     github_refresh_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     avatar_url:       Mapped[str | None] = mapped_column(String(500))
     is_admin:         Mapped[bool] = mapped_column(Boolean, default=False)
+    # The shared, read-only account behind "Try the demo"; it never signs in with a password
+    is_demo:          Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     active_provider:  Mapped[str | None] = mapped_column(String(32))
     created_at:       Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

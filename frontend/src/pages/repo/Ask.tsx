@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, ChevronDown, GitPullRequest, MessageSquareText, Plus, Sparkles, Square, Trash2 } from "lucide-react";
+import { ArrowUp, ChevronDown, Eye, GitPullRequest, MessageSquareText, Plus, Sparkles, Square, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Link, useSearchParams } from "react-router";
 import { toast } from "sonner";
@@ -105,17 +105,19 @@ function Exchange({ q, repoUrl }: { q: QueryResult; repoUrl: string }) {
   );
 }
 
-function ChatList({ chats, active, onSelect, onNew, onDelete }: {
+function ChatList({ chats, active, onSelect, onNew, onDelete, readOnly }: {
   chats: Chat[]; active: number | null; onSelect: (id: number) => void; onNew: () => void;
-  onDelete: (chat: Chat) => void;
+  onDelete: (chat: Chat) => void; readOnly: boolean;
 }) {
   return (
     <nav aria-label="Chats" className="space-y-4">
-      <Button variant="secondary" className="w-full justify-start" onClick={onNew} aria-pressed={active === null}>
-        <Plus className="size-4" /> New chat
-      </Button>
+      {!readOnly && (
+        <Button variant="secondary" className="w-full justify-start" onClick={onNew} aria-pressed={active === null}>
+          <Plus className="size-4" /> New chat
+        </Button>
+      )}
       <div>
-        <p className="px-2.5 text-[11px] font-semibold uppercase tracking-wider text-subtle">Chats</p>
+        <p className="px-2.5 text-[11px] font-semibold uppercase tracking-wider text-subtle">{readOnly ? "Saved chats" : "Chats"}</p>
         {chats.length === 0 ? (
           <p className="mt-2 px-2.5 text-[13px] text-subtle">Your chats will appear here.</p>
         ) : (
@@ -130,10 +132,12 @@ function ChatList({ chats, active, onSelect, onNew, onDelete }: {
                     {relativeTime(c.updated_at)} · {c.questions} {c.questions === 1 ? "question" : "questions"}
                   </span>
                 </button>
-                <button onClick={() => onDelete(c)} aria-label={`Delete chat: ${c.title}`} title="Delete chat"
-                        className="absolute top-2 right-1.5 rounded-md p-1.5 text-subtle opacity-0 transition-opacity hover:text-danger group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 cursor-pointer">
-                  <Trash2 className="size-3.5" />
-                </button>
+                {!readOnly && (
+                  <button onClick={() => onDelete(c)} aria-label={`Delete chat: ${c.title}`} title="Delete chat"
+                          className="absolute top-2 right-1.5 rounded-md p-1.5 text-subtle opacity-0 transition-opacity hover:text-danger group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 cursor-pointer">
+                    <Trash2 className="size-3.5" />
+                  </button>
+                )}
               </li>
             ))}
           </ul>
@@ -165,6 +169,7 @@ export function Ask({ repo }: { repo: Repo }) {
   const stopper = useRef<AbortController | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const hasModel = !!(user.active_provider && user.active_model);
+  const readOnly = user.is_demo;   // the demo shows saved chats; asking needs an account of your own
 
   const select = (id: number | null) => {
     setParams((prev) => {
@@ -272,10 +277,16 @@ export function Ask({ repo }: { repo: Repo }) {
   const newChat = () => { select(null); setQuestion(""); };
   const chatList = chats.data ?? [];
 
+  // The demo has no empty chat to start from, so it opens the newest saved one
+  const firstChat = chatList[0]?.id;
+  useEffect(() => {
+    if (readOnly && chatId === null && firstChat !== undefined) select(firstChat);
+  }, [readOnly, chatId, firstChat]);   // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div className="grid gap-6 lg:grid-cols-[15rem_minmax(0,1fr)]">
       <aside className="hidden lg:sticky lg:top-4 lg:block lg:max-h-[calc(100vh-6rem)] lg:self-start lg:overflow-y-auto">
-        <ChatList chats={chatList} active={chatId} onSelect={select} onNew={newChat} onDelete={setToDelete} />
+        <ChatList chats={chatList} active={chatId} onSelect={select} onNew={newChat} onDelete={setToDelete} readOnly={readOnly} />
       </aside>
 
       <div className="mx-auto w-full max-w-3xl min-w-0">
@@ -283,11 +294,11 @@ export function Ask({ repo }: { repo: Repo }) {
           <label htmlFor="chat-picker" className="sr-only">Chat</label>
           <select id="chat-picker" value={chatId ?? ""} onChange={(e) => select(e.target.value ? Number(e.target.value) : null)}
                   className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-surface px-2.5 text-[13px] text-text">
-            <option value="">New chat</option>
+            {!readOnly && <option value="">New chat</option>}
             {chatList.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
           </select>
-          <Button variant="secondary" size="sm" className="h-9" onClick={newChat}><Plus className="size-4" /> New</Button>
-          {chatId !== null && (
+          {!readOnly && <Button variant="secondary" size="sm" className="h-9" onClick={newChat}><Plus className="size-4" /> New</Button>}
+          {chatId !== null && !readOnly && (
             <Button variant="ghost" size="icon" aria-label="Delete this chat"
                     onClick={() => setToDelete(chatList.find((c) => c.id === chatId) ?? null)}>
               <Trash2 className="size-4" />
@@ -295,7 +306,7 @@ export function Ask({ repo }: { repo: Repo }) {
           )}
         </div>
 
-        {!hasModel && (
+        {!hasModel && !readOnly && (
           <div className="mb-5 rounded-lg border border-warning/25 bg-warning-soft px-4 py-3 text-[13px] text-warning">
             Connect a model provider to ask questions. <Link to="/app/settings" className="font-medium underline">Open settings</Link>
           </div>
@@ -304,7 +315,7 @@ export function Ask({ repo }: { repo: Repo }) {
         {chatId !== null && messages.isPending && <Skeleton className="h-40 rounded-xl" />}
         {messages.error && !missing && <ErrorNotice error={messages.error} />}
 
-        {chatId === null && !pendingHere && (
+        {chatId === null && !pendingHere && !readOnly && (
           <div className="py-6 text-center">
             <div className="mx-auto grid size-11 place-items-center rounded-xl bg-accent-soft text-accent"><Sparkles className="size-5" /></div>
             <h2 className="mt-4 text-base font-semibold">Ask about {repo.full_name}</h2>
@@ -369,46 +380,59 @@ export function Ask({ repo }: { repo: Repo }) {
         {askError && askedHere && <ErrorNotice error={askError} className="mt-4" />}
         <div ref={bottom} />
 
-        <div className="sticky bottom-0 mt-8 bg-gradient-to-t from-bg via-bg to-transparent pt-6 pb-4">
-          <Card className="p-2 focus-within:border-accent">
-            <textarea
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-              onKeyDown={onKey}
-              rows={2}
-              maxLength={2000}
-              disabled={!hasModel}
-              placeholder={!hasModel ? "Connect a model provider first"
-                : chatId === null ? "Why was the auth module refactored?" : "Ask another question in this chat"}
-              aria-label="Your question"
-              className="block w-full resize-none bg-transparent px-2 py-1.5 text-[14px] outline-none placeholder:text-subtle disabled:opacity-60"
-            />
-            <div className="flex flex-wrap items-center gap-2 px-1 pt-1">
-              <Segmented size="sm" value={mode} onChange={setMode} options={MODES} />
-              <label className="flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-muted hover:text-text">
-                <input type="checkbox" checked={onlyPr} onChange={(e) => setOnlyPr(e.target.checked)} className="accent-[var(--accent)]" />
-                Only commits with PRs
-              </label>
-              <div className="flex-1" />
-              {ask.isPending ? (
-                <Button size="icon" variant="secondary" className="size-8" onClick={stop}
-                        aria-label="Stop the answer" title="Stop">
-                  <Square className="size-3 fill-current" />
-                </Button>
-              ) : (
-                <Button size="icon" className="size-8" onClick={() => submit()}
-                        disabled={!hasModel || question.trim().length < 3} aria-label="Ask">
-                  <ArrowUp className="size-4" />
-                </Button>
-              )}
-            </div>
-          </Card>
-          <p className="mt-2 flex items-center justify-center gap-1.5 text-[11px] text-subtle">
-            <MessageSquareText className="size-3" />
-            {chatId === null ? "Enter to send · Shift+Enter for a new line · uses your own API key"
-              : "Follow-ups use this chat's last 3 questions and answers · uses your own API key"}
-          </p>
-        </div>
+        {readOnly ? (
+          <div className="sticky bottom-0 mt-8 bg-gradient-to-t from-bg via-bg to-transparent pt-6 pb-4">
+            <Card className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center">
+              <Eye className="hidden size-5 shrink-0 text-accent sm:block" />
+              <p className="flex-1 text-[13px] text-muted">
+                <span className="font-medium text-text">These are saved chats.</span> The demo is read-only, so it can't
+                ask new questions. Sign up free and add your own API key to ask anything about your own repositories.
+              </p>
+              <Link to="/register" className="shrink-0"><Button size="sm">Sign up free</Button></Link>
+            </Card>
+          </div>
+        ) : (
+          <div className="sticky bottom-0 mt-8 bg-gradient-to-t from-bg via-bg to-transparent pt-6 pb-4">
+            <Card className="p-2 focus-within:border-accent">
+              <textarea
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                onKeyDown={onKey}
+                rows={2}
+                maxLength={2000}
+                disabled={!hasModel}
+                placeholder={!hasModel ? "Connect a model provider first"
+                  : chatId === null ? "Why was the auth module refactored?" : "Ask another question in this chat"}
+                aria-label="Your question"
+                className="block w-full resize-none bg-transparent px-2 py-1.5 text-[14px] outline-none placeholder:text-subtle disabled:opacity-60"
+              />
+              <div className="flex flex-wrap items-center gap-2 px-1 pt-1">
+                <Segmented size="sm" value={mode} onChange={setMode} options={MODES} />
+                <label className="flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-muted hover:text-text">
+                  <input type="checkbox" checked={onlyPr} onChange={(e) => setOnlyPr(e.target.checked)} className="accent-[var(--accent)]" />
+                  Only commits with PRs
+                </label>
+                <div className="flex-1" />
+                {ask.isPending ? (
+                  <Button size="icon" variant="secondary" className="size-8" onClick={stop}
+                          aria-label="Stop the answer" title="Stop">
+                    <Square className="size-3 fill-current" />
+                  </Button>
+                ) : (
+                  <Button size="icon" className="size-8" onClick={() => submit()}
+                          disabled={!hasModel || question.trim().length < 3} aria-label="Ask">
+                    <ArrowUp className="size-4" />
+                  </Button>
+                )}
+              </div>
+            </Card>
+            <p className="mt-2 flex items-center justify-center gap-1.5 text-[11px] text-subtle">
+              <MessageSquareText className="size-3" />
+              {chatId === null ? "Enter to send · Shift+Enter for a new line · uses your own API key"
+                : "Follow-ups use this chat's last 3 questions and answers · uses your own API key"}
+            </p>
+          </div>
+        )}
       </div>
 
       <ConfirmDialog open={toDelete !== null} onClose={() => setToDelete(null)}

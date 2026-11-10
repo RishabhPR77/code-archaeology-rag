@@ -1,13 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ExternalLink, Loader2, Lock, RefreshCw, Trash2, TriangleAlert, XCircle } from "lucide-react";
+import { Check, ExternalLink, Eye, Loader2, Lock, RefreshCw, Trash2, TriangleAlert, XCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
 
 import { Badge, Button, Card, ConfirmDialog, ErrorNotice, Skeleton } from "../../components/ui";
 import { api, ApiError } from "../../lib/api";
-import { meKey } from "../../lib/auth";
-import { reposKey } from "../../lib/queries";
+import { meKey, useSession } from "../../lib/auth";
+import { authConfigKey, demoReposKey, reposKey } from "../../lib/queries";
 import type { Repo } from "../../lib/types";
 import { cn, formatNumber, INGEST_STAGES, isIngesting, relativeTime } from "../../lib/utils";
 import { RepoStatusBadge } from "../Dashboard";
@@ -91,7 +91,9 @@ export default function RepoPage() {
   const { repoId = "", tab } = useParams();
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const { user } = useSession();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmShare, setConfirmShare] = useState(false);
 
   const repo = useQuery({
     queryKey: ["repo", repoId],
@@ -130,6 +132,17 @@ export default function RepoPage() {
     },
   });
 
+  // Admins: hand the repository, with its chats, to the public demo
+  const share = useMutation({
+    mutationFn: () => api.makeDemo(repoId),
+    onSuccess: () => {
+      for (const key of [reposKey, demoReposKey, authConfigKey, meKey]) qc.invalidateQueries({ queryKey: key });
+      toast.success("Shared in the public demo", { description: "Manage it under Settings, Public demo." });
+      navigate("/app/settings");
+    },
+    onError: (e) => { setConfirmShare(false); toast.error(e.message); },
+  });
+
   if (repo.error instanceof ApiError && repo.error.status === 404) return <Navigate to="/app" replace />;
   const activeTab: TabId = TABS.some((t) => t.id === tab) ? (tab as TabId) : "overview";
   const r = repo.data;
@@ -157,7 +170,13 @@ export default function RepoPage() {
                 </>}
               </p>
             </div>
-            <div className="flex gap-2">
+            {!user.is_demo && <div className="flex flex-wrap gap-2">
+              {user.is_admin && !r.is_private && r.status === "ready" && (
+                <Button variant="secondary" size="sm" onClick={() => setConfirmShare(true)}
+                        title="Let anyone explore this repository from the home page">
+                  <Eye className="size-3.5" /> Use as public demo
+                </Button>
+              )}
               <Button variant="secondary" size="sm" onClick={() => resync.mutate()} loading={resync.isPending}
                       disabled={isIngesting(r.status)} title="Re-ingest the latest history">
                 <RefreshCw className="size-3.5" /> Re-sync
@@ -165,7 +184,7 @@ export default function RepoPage() {
               <Button variant="ghost" size="sm" className="hover:text-danger" onClick={() => setConfirmDelete(true)}>
                 <Trash2 className="size-3.5" /> Delete
               </Button>
-            </div>
+            </div>}
           </div>
 
           {r.warnings.length > 0 && r.status === "ready" && (
@@ -176,7 +195,7 @@ export default function RepoPage() {
           )}
 
           {isIngesting(r.status) && <IngestProgress repo={r} />}
-          {r.status === "failed" && <FailedState repo={r} onRetry={() => resync.mutate()} retrying={resync.isPending} />}
+          {r.status === "failed" && !user.is_demo && <FailedState repo={r} onRetry={() => resync.mutate()} retrying={resync.isPending} />}
 
           {r.status === "ready" && (
             <>
@@ -210,6 +229,14 @@ export default function RepoPage() {
           <ConfirmDialog open={confirmDelete} onClose={() => setConfirmDelete(false)} onConfirm={() => remove.mutate()}
                          loading={remove.isPending} confirmLabel="Delete repository" title={`Delete ${r.full_name}?`}
                          description="Its indexed history and your question history for it are permanently removed." />
+          <ConfirmDialog open={confirmShare} onClose={() => setConfirmShare(false)} onConfirm={() => share.mutate()}
+                         loading={share.isPending} confirmLabel="Share in the demo" danger={false}
+                         title={`Use ${r.full_name} as the public demo?`}
+                         description={<>
+                           Anyone will be able to open it from the home page without signing up, including its chats.
+                           Visitors can read everything and use Who broke it?, but can't change anything.
+                           It moves out of your repositories while it's shared; Stop sharing in Settings brings it back.
+                         </>} />
         </>
       )}
     </div>

@@ -127,6 +127,7 @@ export const api = {
   register: (email: string, password: string, name: string) =>
     post<Me>("/auth/register", { email, password, name }),
   logout: () => post<void>("/auth/logout"),
+  demo: () => post<Me>("/auth/demo"),
   verifyEmail: (code: string) => post<Me>("/auth/verify-email", { code }),
   resendCode: () => post<void>("/auth/resend-code"),
 
@@ -151,6 +152,10 @@ export const api = {
   createRepo: (url: string, maxCommits: number) => post<Repo>("/repos", { url, max_commits: maxCommits }),
   resync: (id: string) => post<Repo>(`/repos/${id}/resync`),
   deleteRepo: (id: string) => del(`/repos/${id}`),
+  // Admins: show a repository, with its chats, in the public demo
+  makeDemo: (id: string) => post<void>(`/repos/${id}/make-demo`),
+  demoRepos: () => get<Repo[]>("/admin/demo"),
+  stopSharing: (id: string) => del(`/admin/demo/${id}`),
   overview: (id: string) => get<Overview>(`/repos/${id}/overview`),
   commits: (id: string) => get<Commit[]>(`/repos/${id}/commits`),
   files: (id: string) => get<RepoFile[]>(`/repos/${id}/files`),

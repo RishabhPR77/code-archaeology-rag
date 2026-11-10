@@ -4,7 +4,7 @@ import logging
 import uuid
 from datetime import timedelta
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query as Q, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query as Q, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -12,14 +12,14 @@ from sqlalchemy.orm import Session
 from app import llm
 from app.config import get_settings
 from app.db import SessionLocal, get_db
-from app.deps import owned_repo, verified_user
+from app.deps import client_ip, demo_limiter, demo_total_limiter, owned_repo, verified_user
 from app.llm import ProviderError
 from app.models import Conversation, IngestEvent, Query, Repo, RepoData, User, utcnow
 from app.routers.providers import provider_http_error
 from app.schemas import (GITHUB_URL, AskIn, ConversationOut, QueryOut, StoppedIn, SuspectsIn, SuspectsOut, RepoIn, RepoOut, TimelineIn, TimelineOut,
                          as_utc)
 from app.security import decrypt_secret
-from app.services import github, ingest, rag
+from app.services import demo, github, ingest, rag
 from app.services.users import credential, limits_for
 from ingestion import bug_origins
 from retrieval import analytics
@@ -81,6 +81,19 @@ def _llm_for(db: Session, user: User):
         return llm.generate(provider, api_key, model, system, prompt)
 
     return provider, model, generate
+
+
+def _optional_llm(db: Session, user: User):
+    """Like _llm_for, but (None, None, None) when no model is connected, for features that work without one."""
+    cred = credential(db, user, user.active_provider) if user.active_provider else None
+    return _llm_for(db, user) if cred and cred.model else (None, None, None)
+
+
+def _limit_demo(request: Request, user: User, feature: str):
+    """Demo visitors share one account, so searches that cost embedding tokens are capped per visitor and overall."""
+    if user.is_demo:
+        demo_limiter.check(f"{feature}:{client_ip(request)}")
+        demo_total_limiter.check(feature)
 
 
 # ── Repos ──────────────────────────────────────────────────────────
@@ -368,12 +381,12 @@ def clear_queries(repo: Repo = Depends(owned_repo), db: Session = Depends(get_db
 
 
 @router.post("/{repo_id}/suspects", response_model=SuspectsOut)
-def suspects(body: SuspectsIn, repo: Repo = Depends(owned_repo),
+def suspects(body: SuspectsIn, request: Request, repo: Repo = Depends(owned_repo),
              user: User = Depends(verified_user), db: Session = Depends(get_db)):
     data = _ready_data(repo)
+    _limit_demo(request, user, "suspects")
     # The ranking needs no model; an explanation is added when one is connected
-    cred = credential(db, user, user.active_provider) if user.active_provider else None
-    provider, model, generate = _llm_for(db, user) if cred and cred.model else (None, None, None)
+    provider, model, generate = _optional_llm(db, user)
     try:
         result = rag.find_suspects(body.description, repo.namespace, json.loads(data.chunks_json),
                                    json.loads(data.origins_json) if data.origins_json else None,
@@ -389,10 +402,24 @@ def timeline(body: TimelineIn, repo: Repo = Depends(owned_repo),
     chunks = _chunks(repo)
     if not analytics.file_timeline(chunks, body.path, body.match):
         return TimelineOut(path=body.path, answer=None, provider=None, model=None, entries=[])
-    provider, model, generate = _llm_for(db, user)
+    # The commit list needs no model; the written summary is added when one is connected
+    provider, model, generate = _optional_llm(db, user)
     try:
         result = rag.timeline(body.path, chunks, generate, body.match)
     except ProviderError as e:
         raise provider_http_error(e)
-    return TimelineOut(path=body.path, answer=result["answer"], provider=provider, model=model,
-                       entries=result["entries"])
+    return TimelineOut(path=body.path, answer=result["answer"], provider=provider if generate else None,
+                       model=model if generate else None, entries=result["entries"])
+
+
+# ── Public demo ────────────────────────────────────────────────────
+@router.post("/{repo_id}/make-demo", status_code=status.HTTP_204_NO_CONTENT)
+def make_demo(repo: Repo = Depends(owned_repo), user: User = Depends(verified_user), db: Session = Depends(get_db)):
+    """Admins only: hand this repository, with its chats, to the public demo account."""
+    if not user.is_admin:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only admins can choose the demo repositories")
+    if repo.is_private:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Private repositories can't be shown in the public demo")
+    if repo.status != "ready":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Wait until the repository is ready")
+    demo.make_demo(db, repo)

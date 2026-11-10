@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
 from app.db import init_db
-from app.routers import auth, github, providers, repos
+from app.routers import admin, auth, github, providers, repos
 from app.services import ingest, mailer
 
 log = logging.getLogger(__name__)
@@ -71,6 +71,7 @@ def create_app() -> FastAPI:
     app.include_router(github.router)
     app.include_router(providers.router)
     app.include_router(repos.router)
+    app.include_router(admin.router)
 
     # HEAD too: uptime monitors (often used to keep free hosts awake) send HEAD by default
     @app.api_route("/api/health", methods=["GET", "HEAD"], tags=["meta"])

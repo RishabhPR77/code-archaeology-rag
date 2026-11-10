@@ -35,7 +35,7 @@ def user_out(db: Session, user: User) -> UserOut:
                    github_login=user.github_login,
                    github_connected=user.github_token_enc is not None, google_linked=user.google_sub is not None,
                    has_password=user.password_hash is not None,
-                   is_admin=user.is_admin, active_provider=user.active_provider,
+                   is_admin=user.is_admin, is_demo=user.is_demo, active_provider=user.active_provider,
                    active_model=cred.model if cred else None, created_at=as_utc(user.created_at))
 
 

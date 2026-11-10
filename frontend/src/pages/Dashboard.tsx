@@ -1,9 +1,9 @@
 import { ArrowRight, CheckCircle2, Circle, Clock, FolderGit2, GitCommitHorizontal, GitPullRequest, Lock, Plus } from "lucide-react";
 import { useState } from "react";
-import { Link } from "react-router";
+import { Link, Navigate } from "react-router";
 
 import { NewRepoDialog } from "../components/NewRepoDialog";
-import { Badge, Button, Card, EmptyState, ErrorNotice, Skeleton } from "../components/ui";
+import { Badge, Button, Card, EmptyState, ErrorNotice, Skeleton, Spinner } from "../components/ui";
 import { useSession } from "../lib/auth";
 import { useRepos } from "../lib/queries";
 import type { Repo } from "../lib/types";
@@ -74,7 +74,30 @@ function SetupChecklist({ hasModel, hasRepo, onNewRepo }: { hasModel: boolean; h
   );
 }
 
+// The demo opens straight into its sample repository
+function DemoStart() {
+  const repos = useRepos();
+  if (repos.data?.length) return <Navigate to={`/app/repos/${repos.data[0].id}`} replace />;
+  if (repos.isPending) return <div className="grid h-full place-items-center"><Spinner className="size-5" /></div>;
+  return (
+    <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6">
+      {repos.error ? <ErrorNotice error={repos.error} /> : (
+        <Card>
+          <EmptyState icon={<FolderGit2 className="size-5" />} title="The demo isn't available right now"
+                      description="Sign up free to connect a repository of your own."
+                      action={<Link to="/register"><Button>Sign up free <ArrowRight className="size-4" /></Button></Link>} />
+        </Card>
+      )}
+    </div>
+  );
+}
+
 export default function Dashboard() {
+  const { user } = useSession();
+  return user.is_demo ? <DemoStart /> : <Workspace />;
+}
+
+function Workspace() {
   const { user, limits } = useSession();
   const repos = useRepos();
   const [newOpen, setNewOpen] = useState(false);

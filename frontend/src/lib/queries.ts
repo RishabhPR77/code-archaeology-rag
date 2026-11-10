@@ -20,6 +20,7 @@ export function useProviders() {
 }
 
 export const authConfigKey = ["auth-config"] as const;
+export const demoReposKey = ["admin", "demo"] as const;
 export const githubStatusKey = ["github-status"] as const;
 
 export function useAuthConfig() {

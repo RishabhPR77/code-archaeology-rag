@@ -12,6 +12,7 @@ export interface User {
   google_linked: boolean;
   has_password: boolean;
   is_admin: boolean;
+  is_demo: boolean;   // the shared, read-only demo account
   active_provider: ProviderId | null;
   active_model: string | null;
   created_at: string;
@@ -59,6 +60,7 @@ export interface AuthConfig {
   google_enabled: boolean;
   email_verification: boolean;
   contact_email: string | null;
+  demo_available: boolean;
 }
 
 export interface GitHubInstallation {
@@ -239,7 +241,8 @@ export interface Suspect {
   files: string[];
   pr_number: number | null;
   score: number;
-  scores: { search: number; files: number; risk: number };
+  // Each signal from 0 to 1; see backend/retrieval/suspects.py
+  scores: { search: number; code: number; files: number; type: number; caused: number; size: number; recency: number };
   reasons: string[];
 }
 

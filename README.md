@@ -8,14 +8,14 @@ Code Archaeologist turns a GitHub repository's commits, diffs, pull requests and
 
 You bring your own model: connect an **Anthropic, OpenAI, Google Gemini, Groq or OpenRouter** key and pick any model from that provider's live catalogue.
 
-**Live:** [code-archaeologist-a9ms.onrender.com](https://code-archaeologist-a9ms.onrender.com). It runs on free hosting, so the first visit after a quiet spell can take a minute to wake up.
+**Live:** [code-archaeologist-a9ms.onrender.com](https://code-archaeologist-a9ms.onrender.com). **Try the live demo** there to explore a sample repository, its saved chats and Who broke it? without signing up. It runs on free hosting, so the first visit after a quiet spell can take a minute to wake up.
 
 ### At a glance
 
 - **Measured search quality.** On 583 questions taken from three open-source repositories, the right commit is among the 8 the model reads for **81–89%** of them, up from 65–79% before the search was rebuilt. An automatic [accuracy check](#accuracy) found the bug that was holding it back.
 - **Answers stream in** word by word, with a **Stop** button that keeps what was written.
-- **Finds what broke.** Bug origins traces each bug fix back to the commit that introduced it, and **Who broke it?** ranks likely culprits for a new bug report: on 157 real GitHub issues, the cause is in its top 3 five times as often as by guessing.
-- **Built to run for free and safely:** five LLM providers with each user's own encrypted key, GitHub and Google sign-in, 135 tests in GitHub Actions CI, deployed on Render, Neon and Pinecone.
+- **Finds what broke.** Bug origins traces each bug fix back to the commit that introduced it, and **Who broke it?** ranks likely culprits for a new bug report. On 49 real bug reports from Flask, Click and HTTPX, the commit that caused the bug is in its top 3 for **57%**, nine times as often as checking the newest commits, and in the range of published research for the same task.
+- **Built to run for free and safely:** five LLM providers with each user's own encrypted key, GitHub and Google sign-in, 158 tests in GitHub Actions CI, deployed on Render, Neon and Pinecone.
 
 ![Asking pallets/flask why app.query was added: it searches the history, finds the commits, and the answer streams in with citations](docs/screenshots/ask-streaming.gif)
 
@@ -66,13 +66,14 @@ Code Archaeologist makes that history answerable:
 | **Ask** | Chat-style Q&A over the history, with Detailed, Summary and Bullets modes. Every answer lists its source commits (SHA, author, date, files, relevance) and links each cited SHA to GitHub. Questions are kept in chats: start a **New chat** any time, and switch between or delete past chats. Follow-ups such as “who reviewed it?” understand the chat's last three exchanges. Answers **stream in** as the model writes them, and **Stop** ends one early while keeping what was written, marked as stopped. |
 | **File timeline** | Pick any file or folder from a searchable list and trace every commit that touched it, with an LLM summary of the phases of change, a monthly activity chart and the full chronology. |
 | **Bug origins** | Every bug-fix commit traced back to the commits that most likely introduced the bug, using `git blame` on the lines the fix changed (the SZZ method). Shows how long each bug lived and which commits sit behind several fixes. No LLM needed. |
-| **Who broke it?** | Describe a bug or paste an error, and get the three most likely culprit commits. They're ranked by how well they match the report (hybrid search), whether they changed files it names (stack-trace paths included), and a risk signal from the type of change and Bug origins. Your model explains each suspect and suggests how to confirm it. Suspects, not proof. |
+| **Who broke it?** | Describe a bug or paste an error, and get the three most likely culprit commits. They're ranked by how well they match the report (hybrid search), whether their diff changed code it names (`follow_redirects`, `URL.join`), whether they touched files it names (stack-trace paths included), how big the change was, its type, whether Bug origins traced an earlier bug to it, and a small nudge for recent changes. Changes to only docs or tests are left out. Every suspect lists the reasons it was flagged, and your model explains them and suggests how to confirm one. Suspects, not proof. |
 | **Overview** | Commits, contributors, files touched, lines added and removed, linked PRs, weekly activity and a breakdown of change types. |
 | **Hot files** | The files that change most often, which is where complexity and risk concentrate. |
 | **Co-change** | File pairs that are usually modified together, revealing coupling that static analysis misses. |
 | **Authors** | Who built what: commit share, activity span, lines changed and the files each person owns. |
 | **Pull requests** | Merged PRs linked to the ingested commits, with labels. Their descriptions and reviews feed every answer. |
 | **Commits** | A searchable, filterable commit log with type classification. |
+| **Live demo** | Anyone can open a sample repository without signing up. It's a shared, read-only account: visitors browse the analytics and saved chats, rank suspects and trace files, but every change is refused by the server, and searches are rate-limited per visitor. An admin picks the repository from its page (**Use as public demo**) and can stop sharing it from Settings. |
 | **Accounts** | Email and password sign-up with a 6-digit email code, plus **Continue with Google** and **Continue with GitHub**. Every repository, key and answer is private to its owner. |
 | **Private repositories** | Through a GitHub App, users pick which of their repositories to share. Access is read-only and can be changed on GitHub at any time. |
 
@@ -350,6 +351,7 @@ The interactive OpenAPI docs are available at `/api/docs` in development.
 | `POST /api/auth/register` · `/login` · `/logout` | Email and password auth |
 | `GET /api/auth/me` | Current user and usage limits |
 | `POST /api/auth/verify-email` · `POST /api/auth/resend-code` | Sign-up email code |
+| `POST /api/auth/demo` | Open the read-only demo without an account (`GET /api/auth/config` says whether one is available) |
 | `GET /api/auth/github/login` → `/callback` · `GET /api/auth/google/login` → `/callback` | GitHub App and Google sign-in (PKCE) |
 | `GET /api/github/status` · `GET /api/github/repos` · `DELETE /api/github` | GitHub connection and the repositories a user shared |
 | `GET /api/providers` | The five providers and this user's status for each |
@@ -362,8 +364,9 @@ The interactive OpenAPI docs are available at `/api/docs` in development.
 | `POST /api/repos/{id}/ask/stream` | The same, as server-sent events: `sources` (what was found), `delta` (each new piece of the answer), then `done` (the saved exchange) or `error`. Setup problems, such as no model connected, are normal JSON errors |
 | `POST /api/repos/{id}/ask/stopped` | Keep an answer the user stopped part-way: the page sends the text written so far and it's saved to the chat marked as stopped (if the answer had already finished, the complete one is kept instead) |
 | `GET /api/repos/{id}/chats` · `GET`/`DELETE /api/repos/{id}/chats/{chat_id}` | List chats, read one, delete one |
-| `POST /api/repos/{id}/timeline` | File evolution summary |
+| `POST /api/repos/{id}/timeline` | Every commit that touched a file or folder, with a summary when a model is connected |
 | `POST /api/repos/{id}/suspects` | Rank likely culprit commits for a bug report (`description`, optional `since` date) |
+| `POST /api/repos/{id}/make-demo` · `GET /api/admin/demo` · `DELETE /api/admin/demo/{id}` | Admins: share a repository, with its chats, in the public demo; list or stop sharing |
 
 ## Testing
 
@@ -372,15 +375,16 @@ cd backend
 python -m pytest
 ```
 
-There are 135 tests. GitHub Actions runs them, plus the frontend type-check and build, on every push to `main` and every pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests replace the embedding model with a small stand-in, so CI installs only `requirements.txt`, without torch.
+There are 158 tests. GitHub Actions runs them, plus the frontend type-check and build, on every push to `main` and every pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests replace the embedding model with a small stand-in, so CI installs only `requirements.txt`, without torch.
 
 - **Auth:** sessions, cookie flags, rate limiting and admin handling.
+- **Demo:** only admins can share, and only public, ready repositories; visitors see the shared repository and its chats, every write is refused (including adding a key or deleting a chat), searches are capped per visitor, the demo account can't be signed into or claimed, and signing in with GitHub from the demo makes a real account instead of linking GitHub to the shared one.
 - **Accounts:** email codes (hashing, expiry, attempt and resend limits), GitHub App sign-in, linking and token refresh, Google sign-in, pre-hijack protection, private-repo cloning, the Brevo request format and the startup check of the Brevo sender. All HTTP is mocked.
 - **Migrations:** a database created before migrations existed is stamped and upgraded in place, and questions asked before chats existed are grouped into one chat per repository.
 - **Keys:** encryption, never echoing a key back, and per-user isolation.
 - **Ingestion and analytics:** the full ingest-to-answer flow, chats (grouping, privacy, deletion), follow-up questions (rewritten with only the last three exchanges), streamed answers (event order, follow-ups, a provider failing halfway saves nothing, stopped answers are kept and never duplicated), limits, expiry cleanup and deletion of vectors.
 - **Bug origins:** a real git repository built in the test traces a fix to the commit that introduced the bug, skips docs, tests and add-only fixes, and reports lines older than a shallow clone.
-- **Who broke it?:** file names and stack-trace paths are read from a report, paths match on their last folders, the three signals combine as documented, unrelated commits are left out, the `since` date filters, and commits behind earlier bugs rank higher.
+- **Who broke it?:** file names and stack-trace paths are read from a report and only real files count (not links or `module.attr`), code names are read from a report but links aren't, a commit that changed the code a report names or a larger change ranks higher, docs-only and unrelated commits are left out, the `since` date filters, and commits behind earlier bugs rank higher.
 - **Search:** code is split into words, common words are skipped, the two rankings merge by position, and keywords find a commit the embedding ranked low.
 - **Accuracy check:** the helpers that turn a repository's history into questions remove the answer's own PR text from the index and only use bug fixes from before each report, and find the GitHub issue a fix closes.
 - **Provider adapters:** all five adapters run their **real SDKs against mocked HTTP**, with response bodies shaped like each provider's official API reference. This pins down exactly what is sent (for example, no `temperature` for Anthropic and OpenAI) and how responses and errors are parsed. Streaming is tested the same way, with event streams in each provider's documented format, including errors that arrive halfway through an answer.
@@ -397,7 +401,7 @@ npm run build
 How often does search find the right commit, and does Who broke it? point at the right culprit? Two scripts in [`backend/evals/`](backend/evals) measure both on real repositories, using questions and answers taken from their own history, so nothing is labelled by hand:
 
 - **Search:** each merged pull request becomes a question (its title, or the first real sentence of its description), and the answer is the commit it belongs to. That PR text is removed from the index first, and the title is also cut from the commit message, so the answer can't simply match itself.
-- **Who broke it?:** a fix is a commit whose pull request or message closes a GitHub issue. Bug origins traces what it changed back to the commit that last wrote those lines, which is the answer, and the report is the issue itself, its title and description as a user would paste them. Only commits and fixes from before the fix count.
+- **Who broke it?:** a fix is a commit whose pull request or message closes a GitHub issue. Bug origins traces what it changed back to the commit that last wrote those lines, which is the answer, and the report is the issue itself, its title and description as a user would paste them. Each case is ranked as of when the issue was opened, so only commits and fixes from before it count.
 
 Latest run: the last 200 commits of `pallets/click`, `pallets/flask` and `encode/httpx`, with local BGE-small embeddings. Full tables are in [`backend/evals/RESULTS.md`](backend/evals/RESULTS.md).
 
@@ -428,18 +432,22 @@ The live site does better than the local check suggested: the right commit is am
 
 ### Who broke it? on real bug reports
 
-[`backend/evals/bug_reports.py`](backend/evals/bug_reports.py), on the last 1,000 commits of the same three repositories: 628 commits close an issue, 173 of them trace back to an earlier commit in the window, giving 157 cases (one per issue). Full tables are in [`backend/evals/RESULTS-bug-reports.md`](backend/evals/RESULTS-bug-reports.md).
+[`backend/evals/bug_reports.py`](backend/evals/bug_reports.py), on the last 1,000 commits of the same three repositories. Full tables, including each signal switched off in turn, are in [`backend/evals/RESULTS-bug-reports.md`](backend/evals/RESULTS-bug-reports.md).
 
-| Who broke it?, 157 real issues | Cause first | In the top 3 | In the top 10 | MRR |
+| Who broke it?, 49 real bug reports | Cause first | In the top 3 | In the top 10 | MRR |
 |---|---:|---:|---:|---:|
-| The app (search 0.5, files 0.3, risk 0.2) | **17%** | **32%** | **50%** | **0.26** |
-| Description match only | 17% | 25% | 43% | 0.24 |
-| The fix's commit message as the report | 15% | 30% | 48% | 0.25 |
-| Baseline: newest commit first | 4% | 6% | 12% | 0.06 |
+| The app now | **35%** | **57%** | **61%** | **0.46** |
+| The app before (search, files named, type of change, earlier bugs) | 27% | 43% | 55% | 0.36 |
+| Description match only | 24% | 35% | 53% | 0.32 |
+| Baseline: newest commit first | 2% | 6% | 10% | 0.04 |
 
-- **It's five times better than guessing.** The traced cause is in the top 3 for 32% of real issues, against 6% for picking the newest commits.
-- **The weights hold up.** Turning off the files-named and risk signals drops the top 3 from 32% to 25%, and no other mix tried did clearly better, so they stay as they are.
-- **It's a starting point, not an answer.** About one bug in three has its cause among the three suspects shown. The test is harder than everyday use, since it ranks among up to 1,000 earlier commits where the app usually holds 100, and tracing finds a likely cause rather than a certain one.
+Across all 123 issues, bug reports or not, the cause is first for 22% and in the top 3 for 43% (35% before).
+
+- **First, the test was fixed.** In 43 of 166 traced issues, tracing pointed at a commit made after the issue was opened, which can't be the cause, so the earlier version of this test was grading against wrong answers. Each case is now ranked as of when its issue was opened, and those cases are left out. Many issues that a pull request closes are also feature requests, where "who broke it" has no answer, so results are reported for the 49 real bug reports (labelled as a bug, closed by a fix, or with a traceback) and for every issue.
+- **Then the ranking.** Looking at the misses showed what was going wrong. Most "file names" in reports were links or `module.attr` names, which diluted the file signal. Commits behind earlier bugs were under-weighted. And large changes kept turning out to be the cause, which matches defect-prediction research. So only real file names count now, the diff is checked for code the report names, larger changes and recent ones get a boost, and commits that only changed docs or tests are left out. Each signal adds something: switching off the change size alone drops the top 3 from 57% to 49%.
+- **Checked on unseen data.** The new signals were chosen by tuning on two repositories and testing on the third, in turn. Change size and a small recency boost helped in every split. Weights that only did better on the data they were tuned on were dropped.
+- **How it compares.** [Locus](https://cse.hkust.edu.hk/faculty/scc/publ/ase16-Locus-preprint.pdf) (ASE 2016), a research tool for the same task (ranking commits from a bug report's text), reported the cause in the top 5 for 41% and the top 10 for 51% of 709 bug reports from six Java projects, with an MRR of 0.26. Here it's 46% in the top 5 and 56% in the top 10 across all 123 issues (MRR 0.34), and higher on real bug reports. The projects and sizes differ, and this test ranks among at most 1,000 recent commits, so it's not a head-to-head result, but it puts these numbers in the same range as published work.
+- **What it means in use.** For a bit over half of real bug reports, the cause is among the three suspects shown. 49 cases is a small sample, so the top-3 figure could be several points either way.
 
 ### What good looks like
 
@@ -457,12 +465,13 @@ Rules of thumb for this test, which is harder than everyday use because the PR t
 | Very good | 85–92% | 60–70% | 0.70–0.80 |
 | Excellent | over 92% | over 70% | over 0.80 |
 
-On the number that matters most, search went from weak (55% in the top 8) to good (78–84%). Putting the right commit first (49–53%, MRR 0.59–0.63) is between OK and good, which is where a reranker would help most. For Who broke it?, which shows three suspects, good means the cause is in the top 3 for about half of real bug reports and very good means 60% or more. On 157 real issues it's at 32%, between weak and OK.
+On the number that matters most, search went from weak (55% in the top 8) to good (78–84%). Putting the right commit first (49–53%, MRR 0.59–0.63) is between OK and good, which is where a reranker would help most. For Who broke it?, which shows three suspects, good means the cause is in the top 3 for about half of real bug reports and very good means 60% or more. On 49 real bug reports it's at 57%, good and close to very good.
 
 Next steps toward very good:
 
 1. **Rerank the top results** with a model that reads the question and each commit together (a cross-encoder). Pinecone hosts one (`bge-reranker-v2-m3`), but its free plan allows about 500 rerank requests a month, so search would need to fall back when they run out.
 2. **Help Who broke it? with the stronger model and a reranker too.** Its description match uses the same search, so both should lift it.
+3. **Test Who broke it? on more projects.** 49 bug reports is enough to show the ranking works, but more would make the number firmer.
 
 Run it yourself (needs `requirements-local.txt` for the embedding model; about 20 minutes the first time and 10 after that, and it never touches Pinecone, the database or `GITHUB_TOKEN`):
 

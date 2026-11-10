@@ -1,4 +1,5 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router";
 
 import { api } from "./api";
 import type { Me } from "./types";
@@ -14,6 +15,20 @@ export function useSession(): Me {
   const { data } = useMe();
   if (!data) throw new Error("useSession used outside an authenticated route");
   return data;
+}
+
+/** Sign in to the shared, read-only demo account and open it. */
+export function useStartDemo() {
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  return useMutation({
+    mutationFn: api.demo,
+    onSuccess: (me) => {
+      qc.clear();
+      qc.setQueryData(meKey, me);
+      navigate("/app");
+    },
+  });
 }
 
 export function useSignOut() {

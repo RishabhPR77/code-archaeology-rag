@@ -40,10 +40,11 @@ function RequireUnverified({ children }: { children: ReactNode }) {
   return <Suspense fallback={<FullPageSpinner />}>{children}</Suspense>;
 }
 
+// Signed-out visitors, and demo visitors who want their own account
 function GuestOnly({ children }: { children: ReactNode }) {
   const { data, isPending } = useMe();
   if (isPending) return <FullPageSpinner />;
-  if (data) return <Navigate to="/app" replace />;
+  if (data && !data.user.is_demo) return <Navigate to="/app" replace />;
   return children;
 }
 

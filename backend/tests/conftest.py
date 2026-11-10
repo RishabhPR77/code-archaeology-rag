@@ -25,7 +25,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from app import llm  # noqa: E402
 from app.db import Base, engine, stamp_head  # noqa: E402
-from app.deps import auth_limiter  # noqa: E402
+from app.deps import auth_limiter, demo_limiter, demo_total_limiter  # noqa: E402
 from app.llm.base import ModelInfo, ProviderError  # noqa: E402
 from app.main import app  # noqa: E402
 from app.services import github as github_service  # noqa: E402
@@ -71,7 +71,8 @@ def _isolate(monkeypatch):
         c.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")
     Base.metadata.create_all(engine)
     stamp_head()
-    auth_limiter.hits.clear()
+    for limiter in (auth_limiter, demo_limiter, demo_total_limiter):
+        limiter.hits.clear()
     llm._model_cache.clear()
     FakeProvider.calls = []
     monkeypatch.setitem(llm.PROVIDERS, "anthropic", FakeProvider())

@@ -107,6 +107,7 @@ function useAuthSuccess() {
   const location = useLocation();
   const from = (location.state as { from?: string } | null)?.from ?? "/app";
   return (me: Awaited<ReturnType<typeof api.login>>) => {
+    qc.clear();   // nothing cached for a previous account (or the demo) carries over
     qc.setQueryData(meKey, me);
     navigate(from, { replace: true });
   };

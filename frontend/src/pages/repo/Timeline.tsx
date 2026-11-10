@@ -42,7 +42,7 @@ export function Timeline({ repo }: { repo: Repo }) {
   const run = (next: FileChoice) => {
     setChoice(next);
     setQuery(choiceLabel(next));
-    if (hasModel) trace.mutate(next);
+    trace.mutate(next);
   };
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -56,17 +56,11 @@ export function Timeline({ repo }: { repo: Repo }) {
 
   return (
     <div className="space-y-4">
-      {!hasModel && (
-        <div className="rounded-lg border border-warning/25 bg-warning-soft px-4 py-3 text-[13px] text-warning">
-          Connect a model provider to trace files. <Link to="/app/settings" className="font-medium underline">Open settings</Link>
-        </div>
-      )}
-
       <Card className="p-5">
         <form onSubmit={submit} className="flex flex-col gap-2 sm:flex-row">
           <FilePicker files={files.data} loading={files.isPending} query={query}
                       onQueryChange={(q) => { setQuery(q); setChoice(null); }} onPick={run} />
-          <Button type="submit" loading={trace.isPending} disabled={!query.trim() || !hasModel}>Trace evolution</Button>
+          <Button type="submit" loading={trace.isPending} disabled={!query.trim()}>Trace evolution</Button>
         </form>
         <p className="mt-2 text-xs text-subtle">
           Pick a file or folder from the list, or press Enter to trace every path containing your text.
@@ -81,7 +75,10 @@ export function Timeline({ repo }: { repo: Repo }) {
       {!trace.isPending && !result && (
         <Card>
           <EmptyState icon={<FileClock className="size-5" />} title="Trace how a file evolved"
-                      description="Get the phases of change, who drove them and recurring patterns, plus every commit that touched it." />
+                      description={hasModel
+                        ? "Get the phases of change, who drove them and recurring patterns, plus every commit that touched it."
+                        : user.is_demo ? "See every commit that touched it, month by month."
+                        : "See every commit that touched it, month by month. Connect a model to also get a written summary."} />
         </Card>
       )}
 
@@ -92,16 +89,28 @@ export function Timeline({ repo }: { repo: Repo }) {
 
       {result && traced && result.entries.length > 0 && (
         <>
-          <Card>
-            <CardHeader title="Evolution summary" description={describe(traced)}
-                        action={result.provider && (
-                          <span className="flex items-center gap-1.5 text-xs text-subtle">
-                            <ProviderMark id={result.provider} className="size-5 text-[8px]" />
-                            <span className="font-mono">{result.model}</span>
-                          </span>
-                        )} />
-            <div className="p-5">{result.answer && <Markdown repoUrl={repo.url}>{result.answer}</Markdown>}</div>
-          </Card>
+          {result.answer ? (
+            <Card>
+              <CardHeader title="Evolution summary" description={describe(traced)}
+                          action={result.provider && (
+                            <span className="flex items-center gap-1.5 text-xs text-subtle">
+                              <ProviderMark id={result.provider} className="size-5 text-[8px]" />
+                              <span className="font-mono">{result.model}</span>
+                            </span>
+                          )} />
+              <div className="p-5"><Markdown repoUrl={repo.url}>{result.answer}</Markdown></div>
+            </Card>
+          ) : user.is_demo ? (
+            <p className="rounded-lg border border-border bg-surface-2 px-4 py-3 text-[13px] text-muted">
+              Showing every commit that touched {describe(traced)}. With your own account and API key, your model also
+              writes a summary of how it evolved. <Link to="/register" className="font-medium text-text underline">Sign up free</Link>
+            </p>
+          ) : (
+            <div className="rounded-lg border border-warning/25 bg-warning-soft px-4 py-3 text-[13px] text-warning">
+              Connect a model to get a written summary of how {describe(traced)} evolved.{" "}
+              <Link to="/app/settings" className="font-medium underline">Open settings</Link>
+            </div>
+          )}
           <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
             <Card>
               <CardHeader title="Changes per month" />
