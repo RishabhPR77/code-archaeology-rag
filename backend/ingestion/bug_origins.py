@@ -26,7 +26,7 @@ _DOC_EXT = (".md", ".rst", ".txt", ".adoc", ".lock")
 _DOC_NAMES = {"changelog", "changes", "history", "news", "authors", "license", "contributing"}
 
 
-def _skip_path(path: str) -> bool:
+def is_docs_or_tests(path: str) -> bool:
     """Docs and tests can change in a fix without having been part of the bug."""
     p = path.lower()
     *dirs, name = p.split("/")
@@ -54,7 +54,7 @@ def _deleted_lines(repo: git.Repo, parent: str, sha: str) -> dict[str, list[int]
                 name = raw[4:].rstrip("\t")
                 # "/dev/null" means the file is new, so nothing older to blame; quoted paths are skipped
                 path = name[2:] if name.startswith("a/") else None
-                if path and (_skip_path(path) or len(found) >= MAX_FILES_PER_FIX):
+                if path and (is_docs_or_tests(path) or len(found) >= MAX_FILES_PER_FIX):
                     path = None
             if not raw.startswith("@@"):
                 continue

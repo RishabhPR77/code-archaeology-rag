@@ -67,3 +67,11 @@ def test_an_issue_becomes_the_report_a_user_would_paste():
     assert "Please describe" not in report and "src/click/formatting.py" in report   # stack traces stay
     assert issue_report({"title": "Crash", "body": None}) == "Crash"
     assert len(issue_report({"title": "x", "body": "y" * 9000})) == 4000
+
+
+def test_only_bug_reports_are_kept_for_who_broke_it():
+    from evals.cases import is_bug_report
+    assert is_bug_report(["Type: Bug"], "Add a timeout option", "Requests hang")
+    assert is_bug_report([], "Fix redirect loop with relative URLs (#123)", "Redirects loop forever")
+    assert is_bug_report([], "Support pathlib", 'Crash\nTraceback (most recent call last):\n  File "x.py"')
+    assert not is_bug_report(["enhancement"], "Add streaming multipart support", "Please support streaming uploads")

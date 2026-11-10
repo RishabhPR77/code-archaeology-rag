@@ -3,7 +3,7 @@ from pathlib import Path
 import git
 import pytest
 
-from ingestion.bug_origins import _skip_path, find_bug_origins, summarize
+from ingestion.bug_origins import is_docs_or_tests, find_bug_origins, summarize
 from ingestion.git_loader import load_commits
 
 CALC_V1 = "def add(a, b):\n    return a + b\n\n\ndef div(a, b):\n    return a / b\n"
@@ -101,4 +101,4 @@ def test_summary_counts_and_repeat_origins(history):
     ("conftest.py", True), ("poetry.lock", True), ("src/contest.py", False),
 ])
 def test_docs_and_tests_are_not_blamed(path, skipped):
-    assert _skip_path(path) is skipped
+    assert is_docs_or_tests(path) is skipped

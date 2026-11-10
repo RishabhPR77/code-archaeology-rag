@@ -69,12 +69,13 @@ DEFAULT_REPOS = ["pallets/click", "pallets/flask", "encode/httpx"]
 APP_WEIGHT = vector_store.default_keyword_weight()
 FUSION_WEIGHTS = sorted({1.0, 2.0, 3.0, 4.0, APP_WEIGHT})
 WEIGHT_SETS = {
-    "App (search 0.5, files 0.3, risk 0.2)": WEIGHTS,
-    "Search only": {"search": 1.0, "files": 0.0, "risk": 0.0},
-    "No risk (0.7, 0.3, 0)": {"search": 0.7, "files": 0.3, "risk": 0.0},
-    "More risk (0.4, 0.3, 0.3)": {"search": 0.4, "files": 0.3, "risk": 0.3},
+    "App ranking": WEIGHTS,
+    "Search only": {"search": 1.0},
+    "Without change size": {**WEIGHTS, "size": 0.0},
+    "Earlier weights (search 0.5, files 0.3, type and earlier bugs 0.2)":
+        {"search": 0.5, "files": 0.3, "type": 0.12, "caused": 0.08},
 }
-OLD_SUSPECTS = "App weights, with the search from before"
+OLD_SUSPECTS = "App ranking, with the search from before"
 SEARCH_K = (1, 3, 8)       # the Ask tab reads the top 8 results
 SUSPECT_K = (1, 3, 10)     # Who broke it? shows the top 3
 

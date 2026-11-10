@@ -82,6 +82,15 @@ def issue_report(issue: dict, max_chars: int = 4000) -> str:
     return f"{issue['title'].strip()}\n\n{body}".strip()[:max_chars]
 
 
+def is_bug_report(labels: list[str], fix_message: str, report: str) -> bool:
+    """Many issues a pull request closes are feature requests or questions, where "who broke it" has no
+    answer. An issue counts as a bug report if it's labelled as one, the commit that closed it is a fix
+    by the app's own classifier, or the report has a Python traceback."""
+    from retrieval.analytics import commit_type
+    return (any("bug" in label.lower() for label in labels) or commit_type(fix_message) == "fix"
+            or "traceback (most recent call last)" in report.lower())
+
+
 def suspect_cases(fixes: list[dict]) -> list[dict]:
     """Traced fixes whose cause is one of the ingested commits."""
     cases = []

@@ -6,6 +6,11 @@ of a real bug fix than a message containing "fix". Bug origins traces what each 
 commit that last wrote it, and that commit is the answer. The report is the issue itself, its title and
 description the way a user would paste them, not the fix's one-line commit message.
 
+Each case is ranked as of when the issue was opened, as the app would have seen it: only earlier commits,
+and only earlier fixes for the "already caused a bug" signal. A traced cause newer than the issue can't be
+right, so those cases are dropped. Results are shown for real bug reports (see evals.cases.is_bug_report)
+and for every issue, since many issues a pull request closes are feature requests.
+
     cd backend
     python -m evals.bug_reports                    # pallets/click, pallets/flask, encode/httpx
     python -m evals.bug_reports --commits 500
@@ -28,7 +33,7 @@ from pathlib import Path  # noqa: E402
 import httpx  # noqa: E402
 
 from app.config import get_settings  # noqa: E402
-from evals.cases import closing_issues, issue_report, rank_of, suspect_cases  # noqa: E402
+from evals.cases import closing_issues, is_bug_report, issue_report, rank_of, suspect_cases  # noqa: E402
 from ingestion.bug_origins import find_bug_origins  # noqa: E402
 from ingestion.chunker import build_chunks  # noqa: E402
 from ingestion.git_loader import load_commits  # noqa: E402
@@ -37,15 +42,20 @@ from retrieval.suspects import WEIGHTS, mentioned_files, origin_counts, rank_sus
 from storage import vector_store  # noqa: E402
 from storage.vector_store import VectorStore  # noqa: E402
 
-K = base.SUSPECT_K
-APP = "App weights (search 0.5, files 0.3, risk 0.2)"
+K = (1, 3, 5, 10)   # top 5 as well, which published work on this task reports
+APP = "App ranking"
+ANY = "App ranking, any traced cause counts"
+# Each signal taken out in turn shows what it adds
 VARIANTS = {
-    "Search only": {"search": 1.0, "files": 0.0, "risk": 0.0},
-    "No risk (0.7, 0.3, 0)": {"search": 0.7, "files": 0.3, "risk": 0.0},
-    "More files (0.4, 0.5, 0.1)": {"search": 0.4, "files": 0.5, "risk": 0.1},
-    "More risk (0.4, 0.3, 0.3)": {"search": 0.4, "files": 0.3, "risk": 0.3},
+    "Without change size": {**WEIGHTS, "size": 0.0},
+    "Without code names": {**WEIGHTS, "code": 0.0},
+    "Without recency": {**WEIGHTS, "recency": 0.0},
+    "Without named files": {**WEIGHTS, "files": 0.0},
+    "Earlier weights (search 0.5, files 0.3, type and earlier bugs 0.2)":
+        {"search": 0.5, "files": 0.3, "type": 0.12, "caused": 0.08},
+    "Search only": {"search": 1.0},
 }
-MESSAGE = "App weights, fix message as the report"
+MESSAGE = "App ranking, fix message as the report"
 NEWEST = "Newest commit first"
 
 
@@ -75,6 +85,11 @@ def _prs(full_name: str, commits, cache: Path, token: str | None) -> list[PRReco
     return result.prs
 
 
+def _local_time(utc: str) -> str:
+    """GitHub's UTC time in the commits' convention (local time, ISO format, no zone), so they compare."""
+    return datetime.fromisoformat(utc.replace("Z", "+00:00")).astimezone().replace(tzinfo=None).isoformat()
+
+
 class _Issues:
     """GitHub issues by number, cached on disk; None for pull requests and missing issues."""
 
@@ -100,7 +115,7 @@ class _Issues:
 
     def get(self, number: int) -> dict | None:
         key = str(number)
-        if key not in self.data or (self.data[key] and "labels" not in self.data[key]):
+        if key not in self.data or (self.data[key] and "opened" not in self.data[key]):
             r = self._fetch(number)
             if r is None:
                 print(f"  couldn't fetch issue #{number}; skipping it this run", flush=True)
@@ -113,7 +128,8 @@ class _Issues:
                 # The issues API also returns pull requests; only real issues are bug reports
                 self.data[key] = None if "pull_request" in issue else {
                     "title": issue["title"], "body": issue.get("body") or "",
-                    "labels": [label["name"] for label in issue.get("labels", [])]}
+                    "labels": [label["name"] for label in issue.get("labels", [])],
+                    "opened": _local_time(issue["created_at"])}
             self.path.write_text(json.dumps(self.data), encoding="utf-8")
         return self.data[key]
 
@@ -146,13 +162,13 @@ def _evaluate(full_name: str, commits_n: int, cache: Path, token: str | None) ->
     print(f"  indexing {len(chunks)} commits", flush=True)
     store.ingest(chunks, overwrite=True)
 
-    ranks = {label: [] for label in (APP, *VARIANTS, MESSAGE, NEWEST)}
-    counts = {"closing": len(linked), "traced": 0, "cases": 0, "bug_label": 0, "names_a_file": 0}
-    used_issues = set()
+    ranks = {label: [] for label in (APP, ANY, *VARIANTS, MESSAGE, NEWEST)}
+    counts = {"closing": len(linked), "traced": 0, "after_issue": 0, "cases": 0, "bugs": 0, "names_a_file": 0}
+    is_bug, used_issues = [], set()
+    by_sha = {f["sha"]: f for f in fixes}
+    when = {c["metadata"]["sha"]: c["metadata"]["timestamp"] for c in chunks}
     for case in suspect_cases(fixes):
-        before = [c for c in chunks if c["metadata"]["timestamp"] < case["before"]]
-        visible = {c["metadata"]["sha"] for c in before}
-        if case["answer"] not in visible:
+        if when.get(case["answer"], "9") >= case["before"]:
             continue  # the cause was committed after the fix (a rebase), so no ranking could find it
         counts["traced"] += 1
         # One case per issue: several commits of one pull request can close the same issue
@@ -160,12 +176,21 @@ def _evaluate(full_name: str, commits_n: int, cache: Path, token: str | None) ->
                               and (i := issues.get(n)) and i["title"].strip()), (None, None))
         if issue is None:
             continue
+        # Rank as of when the issue was opened; a cause newer than the report was traced wrongly
+        cutoff = min(issue["opened"], case["before"])
+        if when[case["answer"]] >= cutoff:
+            counts["after_issue"] += 1
+            continue
         used_issues.add(number)
+        before = [c for c in chunks if c["metadata"]["timestamp"] < cutoff]
+        visible = {c["metadata"]["sha"] for c in before}
         report = issue_report(issue)
         counts["cases"] += 1
-        counts["bug_label"] += any("bug" in label.lower() for label in issue["labels"])
+        is_bug.append(is_bug_report(issue["labels"], case["report"], report))
+        counts["bugs"] += is_bug[-1]
         counts["names_a_file"] += bool(mentioned_files(report))
-        caused = origin_counts(case["earlier_fixes"])
+        caused = origin_counts([f for f in fixes if f["timestamp"] < cutoff])
+        traced = {o["sha"] for o in by_sha[case["fix"]]["origins"] if o["ingested"]}
 
         @functools.cache
         def hits(text: str) -> dict[str, float]:
@@ -174,23 +199,38 @@ def _evaluate(full_name: str, commits_n: int, cache: Path, token: str | None) ->
                      if h["metadata"]["sha"] in visible][:30]
             return {h["metadata"]["sha"]: h["score"] for h in found}
 
-        def rank(text: str, weights: dict) -> int | None:
+        def rank(text: str, weights: dict, answers: set | None = None) -> int | None:
             top, _ = rank_suspects(text, before, hits(text), caused, top_n=10, weights=weights)
-            return rank_of({case["answer"]}, [s["sha"] for s in top])
+            return rank_of(answers or {case["answer"]}, [s["sha"] for s in top])
 
         ranks[APP].append(rank(report, WEIGHTS))
+        ranks[ANY].append(rank(report, WEIGHTS, traced))
         for label, weights in VARIANTS.items():
             ranks[label].append(rank(report, weights))
         ranks[MESSAGE].append(rank(case["report"], WEIGHTS))
         newest = sorted(before, key=lambda c: c["metadata"]["timestamp"], reverse=True)[:10]
         ranks[NEWEST].append(rank_of({case["answer"]}, [c["metadata"]["sha"] for c in newest]))
     store.delete_namespace()
-    return {"name": full_name, "head": commits[0].sha[:7], "commits": len(chunks), **counts, "ranks": ranks}
+    return {"name": full_name, "head": commits[0].sha[:7], "commits": len(chunks), **counts, "ranks": ranks,
+            "is_bug": is_bug}
 
 
 def _report(repos: list[dict], commits: int, seconds: float) -> str:
-    pooled = lambda label: [r for repo in repos for r in repo["ranks"][label]]
-    cases = sum(r["cases"] for r in repos)
+    def pooled(label: str, bugs_only: bool) -> list:
+        return [r for repo in repos for r, bug in zip(repo["ranks"][label], repo["is_bug"]) if bug or not bugs_only]
+
+    def table(bugs_only: bool) -> list[str]:
+        return [*base._header("Ranking", K, "Cause in"),
+                *[base._row(label, pooled(label, bugs_only), K) for label in repos[0]["ranks"]]]
+
+    def per_repo(bugs_only: bool) -> list[str]:
+        rows = []
+        for r in repos:
+            ranks = [x for x, bug in zip(r["ranks"][APP], r["is_bug"]) if bug or not bugs_only]
+            rows.append(base._row(f"{r['name']} ({len(ranks)} cases)", ranks, K))
+        return [*base._header("Repository, app ranking", K, "Cause in"), *rows]
+
+    cases, bugs = sum(r["cases"] for r in repos), sum(r["bugs"] for r in repos)
     lines = [
         "# Who broke it? on real bug reports",
         "",
@@ -199,25 +239,33 @@ def _report(repos: list[dict], commits: int, seconds: float) -> str:
         "",
         "A fix is a commit whose pull request or message closes a GitHub issue. Bug origins traces what it changed "
         "back to the commit that last wrote those lines, and that commit is the answer. The report is the issue's "
-        "title and description, the way a user would paste them. Only commits from before the fix are ranked, and the "
-        "\"already caused a bug\" signal only counts earlier fixes. Tracing finds a likely cause rather than a certain "
-        "one, so the true accuracy is somewhat higher than measured.",
+        "title and description, the way a user would paste them. Each case is ranked as of when the issue was "
+        "opened: only earlier commits are candidates, and the \"already caused a bug\" signal only counts earlier "
+        "fixes. A traced cause newer than the issue can't be right, so those cases are left out.",
         "",
-        "| Repository | Commits | Close an issue | Traced to an earlier commit | Cases (one per issue) | "
-        "Labelled bug | Issue names a file |",
-        "|---|---:|---:|---:|---:|---:|---:|",
+        "Many issues a pull request closes are feature requests, where \"who broke it\" has no answer. An issue "
+        "counts as a real bug report if it's labelled as a bug, the commit that closed it is a fix, or it has a "
+        "Python traceback. Tracing finds a likely cause rather than a certain one, and a fix can trace to several "
+        "commits: the main rows count only the commit that wrote most of the fixed lines, and one row counts any "
+        "of them.",
+        "",
+        "| Repository | Commits | Close an issue | Traced to an earlier commit | Cause newer than the issue | "
+        "Cases (one per issue) | Real bug reports | Issue names a file |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
         *[f"| [{r['name']}](https://github.com/{r['name']}) at `{r['head']}` | {r['commits']} | {r['closing']} | "
-          f"{r['traced']} | {r['cases']} | {r['bug_label']} | {r['names_a_file']} |" for r in repos],
+          f"{r['traced']} | {r['after_issue']} | {r['cases']} | {r['bugs']} | {r['names_a_file']} |" for r in repos],
         "",
-        f"## All {cases} cases",
+        f"## Real bug reports ({bugs})",
         "",
-        *base._header("Ranking", K, "Cause in"),
-        *[base._row(label, pooled(label), K) for label in repos[0]["ranks"]],
+        *table(bugs_only=True),
         "",
-        "### Per repository, app weights",
+        *per_repo(bugs_only=True),
         "",
-        *base._header("Repository", K, "Cause in"),
-        *[base._row(f"{r['name']} ({r['cases']} cases)", r["ranks"][APP], K) for r in repos],
+        f"## Every issue ({cases})",
+        "",
+        *table(bugs_only=False),
+        "",
+        *per_repo(bugs_only=False),
         "",
     ]
     return "\n".join(lines)

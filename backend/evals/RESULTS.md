@@ -1,6 +1,6 @@
 # Accuracy check
 
-Run on 2026-11-09 with `python -m evals.run_eval` (local BGE-small embeddings, the last 200 commits of each repository, 10 minutes). The live site uses Pinecone's llama-text-embed-v2, so its numbers can differ.
+Run on 2026-11-09 with `python -m evals.run_eval` (local BGE-small embeddings, the last 200 commits of each repository, 9 minutes). The live site uses Pinecone's llama-text-embed-v2, so its numbers can differ.
 
 | Repository | Commits | Linked PRs | Title questions | Description questions | Traced bugs |
 |---|---:|---:|---:|---:|---:|
@@ -63,11 +63,11 @@ Every bug fix that Bug origins traced to one of the ingested commits becomes a r
 
 | Ranking | Cause in top 1 | Cause in top 3 | Cause in top 10 | MRR |
 |---|---:|---:|---:|---:|
-| App (search 0.5, files 0.3, risk 0.2) | 31% | 46% | 69% | 0.42 |
-| Search only | 23% | 54% | 62% | 0.39 |
-| No risk (0.7, 0.3, 0) | 23% | 54% | 62% | 0.39 |
-| More risk (0.4, 0.3, 0.3) | 23% | 38% | 62% | 0.33 |
-| App weights, with the search from before | 31% | 31% | 38% | 0.33 |
+| App ranking | 38% | 54% | 54% | 0.46 |
+| Search only | 23% | 54% | 54% | 0.36 |
+| Without change size | 31% | 54% | 54% | 0.41 |
+| Earlier weights (search 0.5, files 0.3, type and earlier bugs 0.2) | 38% | 38% | 54% | 0.41 |
+| App ranking, with the search from before | 38% | 54% | 54% | 0.46 |
 | Newest commit first | 15% | 15% | 31% | 0.18 |
 
 ### Per repository, with the app's weights
@@ -75,5 +75,5 @@ Every bug fix that Bug origins traced to one of the ingested commits becomes a r
 | Repository | Cause in top 1 | Cause in top 3 | Cause in top 10 | MRR |
 |---|---:|---:|---:|---:|
 | pallets/click | 60% | 60% | 60% | 0.60 |
-| pallets/flask | 20% | 40% | 80% | 0.36 |
-| encode/httpx | 0% | 33% | 67% | 0.22 |
+| pallets/flask | 20% | 40% | 40% | 0.30 |
+| encode/httpx | 33% | 67% | 67% | 0.50 |
