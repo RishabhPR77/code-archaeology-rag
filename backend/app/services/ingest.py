@@ -63,6 +63,7 @@ def run_ingest(repo_id: str):
             except github.GitHubNotConnected:
                 user_token = None
         url, full_name, namespace, max_commits = repo.url, repo.full_name, repo.namespace, repo.max_commits
+        skip = repo.skip_commits or 0
         private = repo.is_private
     api_token = user_token or settings.github_token or None
 
@@ -76,13 +77,15 @@ def run_ingest(repo_id: str):
         with _slots:
             _update(repo_id, status="cloning", stage_message=f"Cloning {full_name}")
             tmp = tempfile.mkdtemp(prefix="ca-clone-")
-            # Shallow clone: twice the window so every ingested commit still has its parent.
-            # Private repos authenticate through the environment, never the URL.
-            git.Repo.clone_from(url, tmp, depth=max_commits * 2, single_branch=True, no_tags=True,
+            # Shallow clone: the skipped commits plus twice the window, so every ingested commit still
+            # has its parent. Private repos authenticate through the environment, never the URL.
+            git.Repo.clone_from(url, tmp, depth=skip + max_commits * 2, single_branch=True, no_tags=True,
                                 env=github.git_auth_env(user_token) if private else {"GIT_TERMINAL_PROMPT": "0"})
 
-            _update(repo_id, status="extracting", stage_message=f"Reading the last {max_commits} commits")
-            commits = load_commits(tmp, max_count=max_commits)
+            _update(repo_id, status="extracting",
+                    stage_message=(f"Reading commits {skip + 1:,} to {skip + max_commits:,}" if skip
+                                   else f"Reading the last {max_commits} commits"))
+            commits = load_commits(tmp, max_count=max_commits, skip=skip)
             if not commits:
                 raise RuntimeError("No commits could be read from this repository.")
 
@@ -97,8 +100,9 @@ def run_ingest(repo_id: str):
             _update(repo_id, status="fetching_prs", stage_message="Fetching pull requests and reviews")
             prs, warnings = [], []
             try:
-                oldest = min(datetime.fromisoformat(c.timestamp) for c in commits)
-                result = fetch_prs(full_name, max_prs=min(200, max_commits * 2), token=api_token, since=oldest)
+                times = [datetime.fromisoformat(c.timestamp) for c in commits]
+                result = fetch_prs(full_name, max_prs=min(200, max_commits * 2), token=api_token, since=min(times),
+                                   until=max(times) if skip else None)
                 prs, warnings = result.prs, result.warnings
             except Exception as e:
                 warnings.append(f"Pull requests unavailable ({e}). Answers use commit data only.")

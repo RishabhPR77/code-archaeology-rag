@@ -1,18 +1,21 @@
 import { useQuery } from "@tanstack/react-query";
 import { FileCode2, GitCommitHorizontal, GitPullRequest, Minus, Plus, Users } from "lucide-react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { Link } from "react-router";
 import { Area, AreaChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
+import { CountUp } from "../../components/CountUp";
 import { Card, CardHeader, ErrorNotice, Skeleton } from "../../components/ui";
 import { api } from "../../lib/api";
 import { tooltipStyle, useThemeColors } from "../../lib/theme";
 import type { CommitType, Repo } from "../../lib/types";
 import { basename, COMMIT_TYPES, formatDate, formatNumber } from "../../lib/utils";
 
-export function Stat({ icon, label, value, sub }: { icon: ReactNode; label: string; value: ReactNode; sub?: ReactNode }) {
+export function Stat({ icon, label, value, sub, index = 0 }: {
+  icon: ReactNode; label: string; value: ReactNode; sub?: ReactNode; index?: number;
+}) {
   return (
-    <Card className="p-4">
+    <Card className="card-in p-4" style={{ "--i": index } as CSSProperties}>
       <div className="flex items-center gap-2 text-xs text-muted">{icon}{label}</div>
       <p className="mt-2 text-2xl font-semibold tracking-tight">{value}</p>
       {sub && <p className="mt-0.5 text-xs text-subtle">{sub}</p>}
@@ -45,20 +48,20 @@ export function Overview({ repo }: { repo: Repo }) {
   return (
     <div className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat icon={<GitCommitHorizontal className="size-3.5" />} label="Commits" value={formatNumber(o.commits)}
+        <Stat icon={<GitCommitHorizontal className="size-3.5" />} index={0} label="Commits" value={<CountUp value={o.commits} />}
               sub={`${formatDate(o.first_commit)} → ${formatDate(o.last_commit)}`} />
-        <Stat icon={<Users className="size-3.5" />} label="Contributors" value={formatNumber(o.authors)} />
-        <Stat icon={<FileCode2 className="size-3.5" />} label="Files touched" value={formatNumber(o.files)}
+        <Stat icon={<Users className="size-3.5" />} index={1} label="Contributors" value={<CountUp value={o.authors} />} />
+        <Stat icon={<FileCode2 className="size-3.5" />} index={2} label="Files touched" value={<CountUp value={o.files} />}
               sub={<span className="inline-flex items-center gap-2">
                 <span className="inline-flex items-center text-success"><Plus className="size-3" />{formatNumber(o.insertions)}</span>
                 <span className="inline-flex items-center text-danger"><Minus className="size-3" />{formatNumber(o.deletions)}</span>
               </span>} />
-        <Stat icon={<GitPullRequest className="size-3.5" />} label="Linked pull requests" value={formatNumber(o.prs)}
+        <Stat icon={<GitPullRequest className="size-3.5" />} index={3} label="Linked pull requests" value={<CountUp value={o.prs} />}
               sub={o.prs ? "with descriptions & reviews" : "none matched these commits"} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
+        <Card className="card-in lg:col-span-2" style={{ "--i": 4 } as CSSProperties}>
           <CardHeader title="Commit activity" description="Commits per week" />
           <div className="h-64 px-2 pt-4 pb-2">
             <ResponsiveContainer width="100%" height="100%">
@@ -78,7 +81,7 @@ export function Overview({ repo }: { repo: Repo }) {
           </div>
         </Card>
 
-        <Card>
+        <Card className="card-in" style={{ "--i": 5 } as CSSProperties}>
           <CardHeader title="Change types" description="Classified from commit messages" />
           <div className="flex items-center gap-4 p-5">
             <div className="size-32 shrink-0">
@@ -105,7 +108,7 @@ export function Overview({ repo }: { repo: Repo }) {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
+        <Card className="card-in" style={{ "--i": 6 } as CSSProperties}>
           <CardHeader title="Hottest files" action={<Link to={`/app/repos/${repo.id}/hotfiles`} className="text-xs text-accent hover:underline">View all</Link>} />
           <ul className="space-y-3 p-5">
             {hot.data?.map((h) => (
@@ -122,7 +125,7 @@ export function Overview({ repo }: { repo: Repo }) {
             {!hot.data && <Skeleton className="h-40" />}
           </ul>
         </Card>
-        <Card>
+        <Card className="card-in" style={{ "--i": 7 } as CSSProperties}>
           <CardHeader title="Top contributors" action={<Link to={`/app/repos/${repo.id}/authors`} className="text-xs text-accent hover:underline">View all</Link>} />
           <ul className="space-y-3 p-5">
             {authors.data?.slice(0, 6).map((a) => (

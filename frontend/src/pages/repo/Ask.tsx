@@ -105,9 +105,9 @@ function Exchange({ q, repoUrl }: { q: QueryResult; repoUrl: string }) {
   );
 }
 
-function ChatList({ chats, active, onSelect, onNew, onDelete, readOnly }: {
+function ChatList({ chats, active, onSelect, onNew, onDelete, onDeleteAll, readOnly }: {
   chats: Chat[]; active: number | null; onSelect: (id: number) => void; onNew: () => void;
-  onDelete: (chat: Chat) => void; readOnly: boolean;
+  onDelete: (chat: Chat) => void; onDeleteAll: () => void; readOnly: boolean;
 }) {
   return (
     <nav aria-label="Chats" className="space-y-4">
@@ -117,7 +117,12 @@ function ChatList({ chats, active, onSelect, onNew, onDelete, readOnly }: {
         </Button>
       )}
       <div>
-        <p className="px-2.5 text-[11px] font-semibold uppercase tracking-wider text-subtle">{readOnly ? "Saved chats" : "Chats"}</p>
+        <div className="flex items-center justify-between px-2.5">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-subtle">{readOnly ? "Saved chats" : "Chats"}</p>
+          {!readOnly && chats.length > 1 && (
+            <button onClick={onDeleteAll} className="text-[11px] text-subtle hover:text-danger cursor-pointer">Delete all</button>
+          )}
+        </div>
         {chats.length === 0 ? (
           <p className="mt-2 px-2.5 text-[13px] text-subtle">Your chats will appear here.</p>
         ) : (
@@ -242,6 +247,18 @@ export function Ask({ repo }: { repo: Repo }) {
       toast.success("Chat deleted");
     },
   });
+  const [confirmAll, setConfirmAll] = useState(false);
+  const removeAll = useMutation({
+    mutationFn: () => api.deleteAllChats(repo.id),
+    onSuccess: () => {
+      qc.removeQueries({ queryKey: ["repo-data", repo.id, "chat"] });
+      qc.invalidateQueries({ queryKey: chatsKey });
+      select(null);
+      setConfirmAll(false);
+      toast.success("All chats deleted");
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   // A chat link that no longer exists falls back to a new chat
   const missing = messages.error instanceof ApiError && messages.error.status === 404;
@@ -286,7 +303,7 @@ export function Ask({ repo }: { repo: Repo }) {
   return (
     <div className="grid gap-6 lg:grid-cols-[15rem_minmax(0,1fr)]">
       <aside className="hidden lg:sticky lg:top-4 lg:block lg:max-h-[calc(100vh-6rem)] lg:self-start lg:overflow-y-auto">
-        <ChatList chats={chatList} active={chatId} onSelect={select} onNew={newChat} onDelete={setToDelete} readOnly={readOnly} />
+        <ChatList chats={chatList} active={chatId} onSelect={select} onNew={newChat} onDelete={setToDelete} onDeleteAll={() => setConfirmAll(true)} readOnly={readOnly} />
       </aside>
 
       <div className="mx-auto w-full max-w-3xl min-w-0">
@@ -439,6 +456,9 @@ export function Ask({ repo }: { repo: Repo }) {
                      onConfirm={() => toDelete && remove.mutate(toDelete)} loading={remove.isPending}
                      confirmLabel="Delete chat" title="Delete this chat?"
                      description={toDelete ? `“${toDelete.title}” and its answers are removed.` : ""} />
+      <ConfirmDialog open={confirmAll} onClose={() => setConfirmAll(false)} onConfirm={() => removeAll.mutate()}
+                     loading={removeAll.isPending} confirmLabel="Delete all chats" title="Delete all chats?"
+                     description={`All ${chatList.length} chats about ${repo.full_name} and their answers are removed. This can't be undone.`} />
     </div>
   );
 }

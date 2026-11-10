@@ -9,7 +9,7 @@ import { api, ApiError } from "../../lib/api";
 import { meKey, useSession } from "../../lib/auth";
 import { authConfigKey, demoReposKey, reposKey } from "../../lib/queries";
 import type { Repo } from "../../lib/types";
-import { cn, formatNumber, INGEST_STAGES, isIngesting, relativeTime } from "../../lib/utils";
+import { cn, commitSpan, formatNumber, INGEST_STAGES, isIngesting, relativeTime } from "../../lib/utils";
 import { RepoStatusBadge } from "../Dashboard";
 import { Ask } from "./Ask";
 import { BugOrigins } from "./BugOrigins";
@@ -164,7 +164,7 @@ export default function RepoPage() {
                   github.com/{r.full_name} <ExternalLink className="size-3" />
                 </a>
                 {r.status === "ready" && <>
-                  <span>·</span><span>{formatNumber(r.commit_count)} commits</span>
+                  <span>·</span><span>{commitSpan(r)}</span>
                   <span>·</span><span>{formatNumber(r.pr_count)} linked PRs</span>
                   {r.expires_at && <><span>·</span><span title="Repositories are removed automatically">expires {relativeTime(r.expires_at)}</span></>}
                 </>}

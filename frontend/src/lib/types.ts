@@ -55,6 +55,39 @@ export interface Model {
 
 export type RepoStatus = "queued" | "cloning" | "extracting" | "fetching_prs" | "embedding" | "ready" | "failed";
 
+export interface CommitBrief {
+  number: number;   // 1 = the newest commit
+  sha: string;
+  message: string;
+  date: string | null;
+}
+
+export interface RangePreview {
+  full_name: string;
+  total: number;    // commits on the default branch
+  reach: number;    // how far back a range may go
+  newest: CommitBrief | null;
+  oldest: CommitBrief | null;
+}
+
+export interface RecentQuestion {
+  question: string;
+  repo_id: string;
+  repo: string;
+  chat_id: number | null;
+  created_at: string;
+}
+
+export interface Profile {
+  repos: number;
+  ready_repos: number;
+  commits_indexed: number;
+  prs_linked: number;
+  questions: number;
+  chats: number;
+  recent: RecentQuestion[];
+}
+
 export interface AuthConfig {
   github_enabled: boolean;
   google_enabled: boolean;
@@ -98,6 +131,7 @@ export interface Repo {
   error: string | null;
   warnings: string[];
   max_commits: number;
+  skip_commits: number;   // newest commits skipped: 100 means the range starts at commit 101
   commit_count: number;
   pr_count: number;
   created_at: string;

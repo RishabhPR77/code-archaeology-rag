@@ -65,6 +65,7 @@ def test_visitors_explore_the_shared_repo_and_its_chats(client):
     ("post", "/api/repos", {"url": "https://github.com/pallets/click", "max_commits": 50}),
     ("put", "/api/providers/anthropic/key", {"api_key": "good-key-1234"}),
     ("delete", "/api/github", None),
+    ("patch", "/api/auth/me", {"name": "Someone else"}),
 ])
 def test_the_demo_cannot_change_anything(client, method, path, body):
     rid = _share_a_repo(client)

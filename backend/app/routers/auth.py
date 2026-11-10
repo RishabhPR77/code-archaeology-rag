@@ -4,15 +4,16 @@ import logging
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
 from app.deps import auth_limiter, client_ip, current_user
-from app.models import User
-from app.schemas import AuthConfigOut, LoginIn, MeOut, RegisterIn, VerifyEmailIn
+from app.models import Conversation, Query, Repo, User
+from app.schemas import (AuthConfigOut, LoginIn, MeOut, NameIn, ProfileOut, RecentQuestionOut, RegisterIn,
+                         VerifyEmailIn, as_utc)
 from app.security import (SESSION_COOKIE, create_session_token, decode_session_token,
                           hash_password, session_cookie_kwargs, verify_password)
 from app.services import demo, github, oauth, verification
@@ -143,6 +144,33 @@ def logout(response: Response):
 @router.get("/me", response_model=MeOut)
 def me(user: User = Depends(current_user), db: Session = Depends(get_db)):
     return _me(db, user)
+
+
+@router.patch("/me", response_model=MeOut)
+def update_me(body: NameIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Change the display name."""
+    user.name = body.name
+    db.commit()
+    return _me(db, user)
+
+
+@router.get("/profile", response_model=ProfileOut)
+def profile(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Counts of what the user has done, and their latest questions."""
+    repos = db.scalars(select(Repo).where(Repo.user_id == user.id)).all()
+    ready = [r for r in repos if r.status == "ready"]
+    mine = select(Repo.id).where(Repo.user_id == user.id)
+    questions = db.scalar(select(func.count()).select_from(Query).where(Query.repo_id.in_(mine), Query.kind == "ask"))
+    chats = db.scalar(select(func.count()).select_from(Conversation).where(Conversation.repo_id.in_(mine)))
+    names = {r.id: r.full_name for r in repos}
+    latest = db.scalars(select(Query).where(Query.repo_id.in_(mine), Query.kind == "ask")
+                        .order_by(Query.created_at.desc()).limit(5))
+    return ProfileOut(
+        repos=len(repos), ready_repos=len(ready), commits_indexed=sum(r.commit_count for r in ready),
+        prs_linked=sum(r.pr_count for r in ready), questions=questions or 0, chats=chats or 0,
+        recent=[RecentQuestionOut(question=q.question, repo_id=q.repo_id, repo=names.get(q.repo_id, ""),
+                                  chat_id=q.conversation_id, created_at=as_utc(q.created_at)) for q in latest],
+    )
 
 
 # ── GitHub App ─────────────────────────────────────────────────────

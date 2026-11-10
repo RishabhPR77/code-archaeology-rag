@@ -8,6 +8,7 @@ import { meKey, useSession } from "../lib/auth";
 import { reposKey, useAuthConfig, useGitHubStatus } from "../lib/queries";
 import { cn, relativeTime } from "../lib/utils";
 import { GitHubIcon } from "./brand";
+import { CommitRange, MIN_RANGE } from "./CommitRange";
 import { Button, Dialog, ErrorNotice, Input, Label, Segmented, Skeleton } from "./ui";
 
 const EXAMPLES = ["pallets/flask", "fastapi/fastapi", "psf/requests"];
@@ -103,12 +104,19 @@ function NewRepoForm({ onClose }: { onClose: () => void }) {
   const [url, setUrl] = useState("");
   const [picked, setPicked] = useState("");
   const [commits, setCommits] = useState(limits.commit_options.at(-1) ?? 100);
+  // "latest" takes the newest commits; "range" takes commits from..to, counted back from the newest (1)
+  const [which, setWhich] = useState<"latest" | "range">("latest");
+  const [range, setRange] = useState({ from: 1, to: Math.min(100, limits.max_commits) });
   const qc = useQueryClient();
   const navigate = useNavigate();
 
   const target = source === "github" && githubEnabled ? (picked ? `https://github.com/${picked}` : "") : url.trim();
+  const rangeSize = range.to - range.from + 1;
+  const rangeOk = rangeSize >= MIN_RANGE && rangeSize <= limits.max_commits;
   const create = useMutation({
-    mutationFn: () => api.createRepo(target, commits),
+    mutationFn: () => which === "range"
+      ? api.createRepo(target, rangeSize, range.from - 1)
+      : api.createRepo(target, commits),
     onSuccess: (repo) => {
       qc.invalidateQueries({ queryKey: reposKey });
       qc.invalidateQueries({ queryKey: meKey });
@@ -150,9 +158,16 @@ function NewRepoForm({ onClose }: { onClose: () => void }) {
       )}
 
       <div>
-        <Label hint="Most recent commits on the default branch">Commits to analyse</Label>
-        <Segmented value={commits} onChange={setCommits}
-                   options={limits.commit_options.map((c) => ({ value: c, label: c }))} />
+        <Label hint="On the default branch">Commits to analyse</Label>
+        <Segmented value={which} onChange={setWhich} size="sm" className="mb-3"
+                   options={[{ value: "latest", label: "The latest" }, { value: "range", label: "A range" }]} />
+        {which === "latest" ? (
+          <Segmented value={commits} onChange={setCommits}
+                     options={limits.commit_options.map((c) => ({ value: c, label: c }))} />
+        ) : (
+          <CommitRange url={target} maxSpan={limits.max_commits} from={range.from} to={range.to}
+                       onChange={(from, to) => setRange({ from, to })} />
+        )}
       </div>
 
       {!limits.unlimited && (
@@ -167,7 +182,8 @@ function NewRepoForm({ onClose }: { onClose: () => void }) {
 
       <div className="flex justify-end gap-2 pt-1">
         <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
-        <Button type="submit" loading={create.isPending} disabled={!target || atRepoLimit}>Start ingest</Button>
+        <Button type="submit" loading={create.isPending}
+                disabled={!target || atRepoLimit || (which === "range" && !rangeOk)}>Start ingest</Button>
       </div>
     </form>
   );

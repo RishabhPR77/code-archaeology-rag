@@ -7,6 +7,7 @@ and the app only asks for read access.
 """
 import base64
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -173,3 +174,66 @@ def git_auth_env(token: str) -> dict[str, str]:
     basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
     return {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
             "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {basic}", "GIT_TERMINAL_PROMPT": "0"}
+
+
+# ── Commit range preview ───────────────────────────────────────────
+class GitHubUnavailable(Exception):
+    """GitHub is rate-limiting us or can't be reached."""
+
+
+_LOOKUPS: dict[tuple, tuple[float, object]] = {}
+_LOOKUP_TTL = 600   # seconds; the newest commits move, but slowly enough for a preview
+_lookup_lock = threading.Lock()
+
+
+def _cached(key: tuple, fetch):
+    now = time.monotonic()
+    with _lookup_lock:
+        hit = _LOOKUPS.get(key)
+        if hit and now - hit[0] < _LOOKUP_TTL:
+            return hit[1]
+    value = fetch()
+    with _lookup_lock:
+        if len(_LOOKUPS) > 2000:
+            _LOOKUPS.clear()
+        _LOOKUPS[key] = (now, value)
+    return value
+
+
+def _commits_page(full_name: str, page: int, token: str | None) -> httpx.Response:
+    try:
+        with oauth.http() as client:
+            r = _get(client, token, f"/repos/{full_name}/commits", per_page=1, page=page)
+    except httpx.HTTPError as e:
+        raise GitHubUnavailable(str(e)) from e
+    if r.status_code in (403, 429) or r.status_code >= 500:
+        raise GitHubUnavailable(f"GitHub answered {r.status_code}")
+    return r
+
+
+def commit_total(full_name: str, token: str | None) -> int | None:
+    """Commits on the default branch, or None if the repository doesn't exist (or this token can't see it).
+    With one commit per page, the number of the last page is the number of commits."""
+    def fetch():
+        r = _commits_page(full_name, 1, token)
+        if r.status_code in (404, 409):   # missing, or an empty repository
+            return None if r.status_code == 404 else 0
+        last = r.links.get("last", {}).get("url")
+        if last:
+            return int(httpx.URL(last).params.get("page", "1"))
+        return len(r.json())
+    return _cached(("total", full_name, bool(token)), fetch)
+
+
+def commit_at(full_name: str, number: int, token: str | None) -> dict | None:
+    """The commit at a position on the default branch, 1 being the newest."""
+    def fetch():
+        r = _commits_page(full_name, number, token)
+        items = r.json() if r.status_code == 200 else []
+        if not items:
+            return None
+        c = items[0]
+        message = (c.get("commit", {}).get("message") or "").split("\n")[0][:140]
+        date = (c.get("commit", {}).get("author") or {}).get("date")
+        return {"number": number, "sha": c["sha"][:7], "message": message, "date": date}
+    return _cached(("at", full_name, number, bool(token)), fetch)

@@ -11,6 +11,7 @@ import { NotFound } from "./pages/NotFound";
 
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Settings = lazy(() => import("./pages/Settings"));
+const Profile = lazy(() => import("./pages/Profile"));
 const RepoPage = lazy(() => import("./pages/repo/RepoPage"));
 const VerifyEmail = lazy(() => import("./pages/VerifyEmail"));
 
@@ -69,6 +70,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <Dashboard /> },
       { path: "settings", element: <Settings /> },
+      { path: "profile", element: <Profile /> },
       { path: "repos/:repoId/:tab?", element: <RepoPage /> },
     ],
   },

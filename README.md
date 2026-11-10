@@ -15,7 +15,7 @@ You bring your own model: connect an **Anthropic, OpenAI, Google Gemini, Groq or
 - **Measured search quality.** On 583 questions taken from three open-source repositories, the right commit is among the 8 the model reads for **81–89%** of them, up from 65–79% before the search was rebuilt. An automatic [accuracy check](#accuracy) found the bug that was holding it back.
 - **Answers stream in** word by word, with a **Stop** button that keeps what was written.
 - **Finds what broke.** Bug origins traces each bug fix back to the commit that introduced it, and **Who broke it?** ranks likely culprits for a new bug report. On 49 real bug reports from Flask, Click and HTTPX, the commit that caused the bug is in its top 3 for **57%**, nine times as often as checking the newest commits, and in the range of published research for the same task.
-- **Built to run for free and safely:** five LLM providers with each user's own encrypted key, GitHub and Google sign-in, 158 tests in GitHub Actions CI, deployed on Render, Neon and Pinecone.
+- **Built to run for free and safely:** five LLM providers with each user's own encrypted key, GitHub and Google sign-in, 165 tests in GitHub Actions CI, deployed on Render, Neon and Pinecone.
 
 ![Asking pallets/flask why app.query was added: it searches the history, finds the commits, and the answer streams in with citations](docs/screenshots/ask-streaming.gif)
 
@@ -64,7 +64,7 @@ Code Archaeologist makes that history answerable:
 | | |
 |---|---|
 | **Ask** | Chat-style Q&A over the history, with Detailed, Summary and Bullets modes. Every answer lists its source commits (SHA, author, date, files, relevance) and links each cited SHA to GitHub. Questions are kept in chats: start a **New chat** any time, and switch between or delete past chats. Follow-ups such as “who reviewed it?” understand the chat's last three exchanges. Answers **stream in** as the model writes them, and **Stop** ends one early while keeping what was written, marked as stopped. |
-| **File timeline** | Pick any file or folder from a searchable list and trace every commit that touched it, with an LLM summary of the phases of change, a monthly activity chart and the full chronology. |
+| **File timeline** | Pick any file or folder from a searchable list and trace every commit that touched it, with a monthly activity chart and the full chronology, plus a summary of the phases of change when a model is connected. |
 | **Bug origins** | Every bug-fix commit traced back to the commits that most likely introduced the bug, using `git blame` on the lines the fix changed (the SZZ method). Shows how long each bug lived and which commits sit behind several fixes. No LLM needed. |
 | **Who broke it?** | Describe a bug or paste an error, and get the three most likely culprit commits. They're ranked by how well they match the report (hybrid search), whether their diff changed code it names (`follow_redirects`, `URL.join`), whether they touched files it names (stack-trace paths included), how big the change was, its type, whether Bug origins traced an earlier bug to it, and a small nudge for recent changes. Changes to only docs or tests are left out. Every suspect lists the reasons it was flagged, and your model explains them and suggests how to confirm one. Suspects, not proof. |
 | **Overview** | Commits, contributors, files touched, lines added and removed, linked PRs, weekly activity and a breakdown of change types. |
@@ -73,6 +73,8 @@ Code Archaeologist makes that history answerable:
 | **Authors** | Who built what: commit share, activity span, lines changed and the files each person owns. |
 | **Pull requests** | Merged PRs linked to the ingested commits, with labels. Their descriptions and reviews feed every answer. |
 | **Commits** | A searchable, filterable commit log with type classification. |
+| **Any slice of history** | Ingest the latest commits, or a range further back, such as commits 500 to 700. Drag it on a slider over the whole history or type it in, and the dialog shows the first and last commit of the range (date and message) before you start. |
+| **Repositories and profile** | The dashboard lists your repositories as cards with live ingest progress, and deletes one in a click. Your profile shows your details, how you sign in, and your activity: repositories, commits indexed, questions asked and your latest questions, each one link away from its chat. |
 | **Live demo** | Anyone can open a sample repository without signing up. It's a shared, read-only account: visitors browse the analytics and saved chats, rank suspects and trace files, but every change is refused by the server, and searches are rate-limited per visitor. An admin picks the repository from its page (**Use as public demo**) and can stop sharing it from Settings. |
 | **Accounts** | Email and password sign-up with a 6-digit email code, plus **Continue with Google** and **Continue with GitHub**. Every repository, key and answer is private to its owner. |
 | **Private repositories** | Through a GitHub App, users pick which of their repositories to share. Access is read-only and can be changed on GitHub at any time. |
@@ -349,7 +351,8 @@ The interactive OpenAPI docs are available at `/api/docs` in development.
 | Method and path | Description |
 |---|---|
 | `POST /api/auth/register` · `/login` · `/logout` | Email and password auth |
-| `GET /api/auth/me` | Current user and usage limits |
+| `GET /api/auth/me` · `PATCH /api/auth/me` | Current user and usage limits; change the display name |
+| `GET /api/auth/profile` | Activity for the profile page: repositories, commits indexed, questions, chats and the latest questions |
 | `POST /api/auth/verify-email` · `POST /api/auth/resend-code` | Sign-up email code |
 | `POST /api/auth/demo` | Open the read-only demo without an account (`GET /api/auth/config` says whether one is available) |
 | `GET /api/auth/github/login` → `/callback` · `GET /api/auth/google/login` → `/callback` | GitHub App and Google sign-in (PKCE) |
@@ -358,12 +361,13 @@ The interactive OpenAPI docs are available at `/api/docs` in development.
 | `PUT /api/providers/{id}/key` | Verify and save a key; returns the live model list |
 | `GET /api/providers/{id}/models` | Live model list (`?refresh=true` bypasses the 10-minute cache) |
 | `PUT /api/providers/{id}/model` · `PUT /api/providers/active` | Choose a model or the active provider |
-| `POST /api/repos` · `GET /api/repos/{id}` · `POST /api/repos/{id}/resync` · `DELETE /api/repos/{id}` | Ingest and manage repositories (status is polled) |
+| `POST /api/repos` · `GET /api/repos/{id}` · `POST /api/repos/{id}/resync` · `DELETE /api/repos/{id}` | Ingest and manage repositories (status is polled); `skip_commits` starts the window further back, so `max_commits` 200 with `skip_commits` 499 ingests commits 500 to 699 |
+| `GET /api/repos/range-preview` | For a URL and a range: how many commits the repository has, and the commits at each end of the range |
 | `GET /api/repos/{id}/overview` · `hotfiles` · `cochange` · `authors` · `pulls` · `commits` · `files` · `origins` | Analytics, including bug origins |
 | `POST /api/repos/{id}/ask` | Ask a question; `conversation_id` continues a chat, leaving it out starts a new one |
 | `POST /api/repos/{id}/ask/stream` | The same, as server-sent events: `sources` (what was found), `delta` (each new piece of the answer), then `done` (the saved exchange) or `error`. Setup problems, such as no model connected, are normal JSON errors |
 | `POST /api/repos/{id}/ask/stopped` | Keep an answer the user stopped part-way: the page sends the text written so far and it's saved to the chat marked as stopped (if the answer had already finished, the complete one is kept instead) |
-| `GET /api/repos/{id}/chats` · `GET`/`DELETE /api/repos/{id}/chats/{chat_id}` | List chats, read one, delete one |
+| `GET /api/repos/{id}/chats` · `GET`/`DELETE /api/repos/{id}/chats/{chat_id}` · `DELETE /api/repos/{id}/queries` | List chats, read one, delete one, or delete them all |
 | `POST /api/repos/{id}/timeline` | Every commit that touched a file or folder, with a summary when a model is connected |
 | `POST /api/repos/{id}/suspects` | Rank likely culprit commits for a bug report (`description`, optional `since` date) |
 | `POST /api/repos/{id}/make-demo` · `GET /api/admin/demo` · `DELETE /api/admin/demo/{id}` | Admins: share a repository, with its chats, in the public demo; list or stop sharing |
@@ -375,9 +379,11 @@ cd backend
 python -m pytest
 ```
 
-There are 158 tests. GitHub Actions runs them, plus the frontend type-check and build, on every push to `main` and every pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests replace the embedding model with a small stand-in, so CI installs only `requirements.txt`, without torch.
+There are 165 tests. GitHub Actions runs them, plus the frontend type-check and build, on every push to `main` and every pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests replace the embedding model with a small stand-in, so CI installs only `requirements.txt`, without torch.
 
 - **Auth:** sessions, cookie flags, rate limiting and admin handling.
+- **Commit ranges:** a range clones deep enough to reach it, reads exactly that window, keeps it on re-sync, and can't reach back further than 5,000 commits; pull requests newer than the range don't use up the pull request budget; the preview reads the commit count from GitHub's paging and stops at the oldest commit.
+- **Profile:** activity counts and the latest questions, renaming, and blank names refused.
 - **Demo:** only admins can share, and only public, ready repositories; visitors see the shared repository and its chats, every write is refused (including adding a key or deleting a chat), searches are capped per visitor, the demo account can't be signed into or claimed, and signing in with GitHub from the demo makes a real account instead of linking GitHub to the shared one.
 - **Accounts:** email codes (hashing, expiry, attempt and resend limits), GitHub App sign-in, linking and token refresh, Google sign-in, pre-hijack protection, private-repo cloning, the Brevo request format and the startup check of the Brevo sender. All HTTP is mocked.
 - **Migrations:** a database created before migrations existed is stamped and upgraded in place, and questions asked before chats existed are grouped into one chat per repository.

@@ -1,5 +1,5 @@
 import {
-  ArrowRight, BarChart3, FileClock, GitMerge, KeyRound, Network, PlayCircle, Search, ShieldCheck, Users,
+  ArrowRight, BarChart3, Bug, FileClock, FileSearch, GitMerge, KeyRound, PlayCircle, Search, ShieldCheck,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link } from "react-router";
@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { AnswerPreview } from "../components/AnswerPreview";
 import { Logo, ProviderMark, ThemeToggle } from "../components/brand";
 import { ProductDemo } from "../components/ProductDemo";
+import { Reveal } from "../components/Reveal";
 import { Button } from "../components/ui";
 import { useMe, useStartDemo } from "../lib/auth";
 import { useAuthConfig } from "../lib/queries";
@@ -16,17 +17,17 @@ import { PROVIDER_NAMES } from "../lib/utils";
 
 const FEATURES: { icon: ReactNode; title: string; body: string }[] = [
   { icon: <Search className="size-4" />, title: "Answers with sources",
-    body: "Every answer links to the exact commits, diffs and pull requests it came from." },
+    body: "Answers stream in as the model writes them, and link to the exact commits, diffs and pull requests they came from." },
+  { icon: <FileSearch className="size-4" />, title: "Who broke it?",
+    body: "Describe a bug or paste a stack trace, and get the three commits most likely to have caused it, with the reasons for each." },
+  { icon: <Bug className="size-4" />, title: "Bug origins",
+    body: "Every bug fix traced back to the commit that introduced it, and how long the bug went unnoticed." },
   { icon: <GitMerge className="size-4" />, title: "Pull request context",
     body: "PR descriptions, review comments and linked issues are read alongside each commit." },
   { icon: <FileClock className="size-4" />, title: "File timelines",
-    body: "See how any file changed over time and who drove each change." },
-  { icon: <Network className="size-4" />, title: "Hidden coupling",
-    body: "Find files that always change together, even when no import connects them." },
-  { icon: <BarChart3 className="size-4" />, title: "Hot spots",
-    body: "See where changes concentrate and how activity moves week to week." },
-  { icon: <Users className="size-4" />, title: "Knowledge map",
-    body: "See who owns what, and which parts of the code depend on one person." },
+    body: "Pick any file or folder and see every change to it, month by month, and who drove each one." },
+  { icon: <BarChart3 className="size-4" />, title: "Hot spots and ownership",
+    body: "See which files change most, which ones always change together, and who owns what." },
 ];
 
 const STEPS = [
@@ -137,12 +138,14 @@ export function Landing() {
           <p className="text-[13px] font-semibold text-accent">Features</p>
           <h2 className="mt-2 text-3xl font-bold tracking-tight">More than a chatbot for your repo.</h2>
           <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {FEATURES.map((f) => (
-              <div key={f.title} className="rounded-xl border border-border bg-surface p-6 transition-colors hover:border-accent/50">
-                <div className="grid size-9 place-items-center rounded-lg bg-accent-soft text-accent">{f.icon}</div>
-                <h3 className="mt-4 text-[15px] font-bold">{f.title}</h3>
-                <p className="mt-1.5 text-sm leading-relaxed text-muted">{f.body}</p>
-              </div>
+            {FEATURES.map((f, i) => (
+              <Reveal key={f.title} index={i % 3}>
+                <div className="card-lift group h-full rounded-xl border border-border bg-surface p-6">
+                  <div className="grid size-9 place-items-center rounded-lg bg-accent-soft text-accent transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-6">{f.icon}</div>
+                  <h3 className="mt-4 text-[15px] font-bold">{f.title}</h3>
+                  <p className="mt-1.5 text-sm leading-relaxed text-muted">{f.body}</p>
+                </div>
+              </Reveal>
             ))}
           </div>
         </div>
@@ -155,9 +158,11 @@ export function Landing() {
           <ol className="mt-10 grid gap-8 md:grid-cols-3">
             {STEPS.map(([title, body], i) => (
               <li key={title}>
-                <span className="grid size-9 place-items-center rounded-full bg-accent text-sm font-bold text-accent-fg">{i + 1}</span>
-                <h3 className="mt-4 text-[15px] font-bold">{title}</h3>
-                <p className="mt-1.5 text-sm leading-relaxed text-muted">{body}</p>
+                <Reveal index={i}>
+                  <span className="grid size-9 place-items-center rounded-full bg-accent text-sm font-bold text-accent-fg">{i + 1}</span>
+                  <h3 className="mt-4 text-[15px] font-bold">{title}</h3>
+                  <p className="mt-1.5 text-sm leading-relaxed text-muted">{body}</p>
+                </Reveal>
               </li>
             ))}
           </ol>
@@ -178,11 +183,13 @@ export function Landing() {
             </ul>
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {PROVIDERS.map((p) => (
-              <div key={p} className="flex items-center gap-3 rounded-xl border border-border bg-surface p-4 sm:last:col-span-2">
-                <ProviderMark id={p} />
-                <span className="text-sm font-semibold">{PROVIDER_NAMES[p]}</span>
-              </div>
+            {PROVIDERS.map((p, i) => (
+              <Reveal key={p} index={i} className="sm:last:col-span-2">
+                <div className="card-lift group flex items-center gap-3 rounded-xl border border-border bg-surface p-4">
+                  <span className="transition-transform duration-300 group-hover:scale-110"><ProviderMark id={p} /></span>
+                  <span className="text-sm font-semibold">{PROVIDER_NAMES[p]}</span>
+                </div>
+              </Reveal>
             ))}
           </div>
         </div>

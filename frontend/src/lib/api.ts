@@ -1,5 +1,5 @@
 import type {
-  AskMode, AuthConfig, Author, Chat, CoChange, Commit, GitHubRepo, GitHubStatus, HotFile, Me, Model,
+  AskMode, AuthConfig, Profile, RangePreview, Author, Chat, CoChange, Commit, GitHubRepo, GitHubStatus, HotFile, Me, Model,
   OriginsResult, Overview, Provider, ProviderId, PullRequest, QueryResult, Repo, RepoFile, Source, SuspectsResult,
   TimelineMatch, TimelineResult,
 } from "./types";
@@ -128,6 +128,8 @@ export const api = {
     post<Me>("/auth/register", { email, password, name }),
   logout: () => post<void>("/auth/logout"),
   demo: () => post<Me>("/auth/demo"),
+  profile: () => get<Profile>("/auth/profile"),
+  rename: (name: string) => request<Me>("PATCH", "/auth/me", { name }),
   verifyEmail: (code: string) => post<Me>("/auth/verify-email", { code }),
   resendCode: () => post<void>("/auth/resend-code"),
 
@@ -149,7 +151,10 @@ export const api = {
   // Repos
   repos: () => get<Repo[]>("/repos"),
   repo: (id: string) => get<Repo>(`/repos/${id}`),
-  createRepo: (url: string, maxCommits: number) => post<Repo>("/repos", { url, max_commits: maxCommits }),
+  createRepo: (url: string, maxCommits: number, skipCommits = 0) =>
+    post<Repo>("/repos", { url, max_commits: maxCommits, skip_commits: skipCommits }),
+  rangePreview: (url: string, skip: number, count: number) =>
+    get<RangePreview>(`/repos/range-preview?${new URLSearchParams({ url, skip: String(skip), count: String(count) })}`),
   resync: (id: string) => post<Repo>(`/repos/${id}/resync`),
   deleteRepo: (id: string) => del(`/repos/${id}`),
   // Admins: show a repository, with its chats, in the public demo
@@ -167,6 +172,7 @@ export const api = {
   chats: (id: string) => get<Chat[]>(`/repos/${id}/chats`),
   chat: (id: string, chatId: number) => get<QueryResult[]>(`/repos/${id}/chats/${chatId}`),
   deleteChat: (id: string, chatId: number) => del(`/repos/${id}/chats/${chatId}`),
+  deleteAllChats: (id: string) => del(`/repos/${id}/queries`),
   // chatId null starts a new chat; the answer says which chat it landed in
   ask: (id: string, question: string, mode: AskMode, onlyPr: boolean, chatId: number | null,
         handlers: AskStreamHandlers = {}, signal?: AbortSignal) =>

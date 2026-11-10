@@ -16,7 +16,8 @@ from app.deps import client_ip, demo_limiter, demo_total_limiter, owned_repo, ve
 from app.llm import ProviderError
 from app.models import Conversation, IngestEvent, Query, Repo, RepoData, User, utcnow
 from app.routers.providers import provider_http_error
-from app.schemas import (GITHUB_URL, AskIn, ConversationOut, QueryOut, StoppedIn, SuspectsIn, SuspectsOut, RepoIn, RepoOut, TimelineIn, TimelineOut,
+from app.schemas import (GITHUB_URL, MAX_COMMIT_REACH, AskIn, CommitBriefOut, ConversationOut, QueryOut,
+                         RangePreviewOut, RepoIn, RepoOut, StoppedIn, SuspectsIn, SuspectsOut, TimelineIn, TimelineOut,
                          as_utc)
 from app.security import decrypt_secret
 from app.services import demo, github, ingest, rag
@@ -33,7 +34,8 @@ def repo_out(repo: Repo) -> RepoOut:
                    status=repo.status,
                    stage_message=repo.stage_message, error=repo.error,
                    warnings=[w for w in repo.warnings.split("\n") if w],
-                   max_commits=repo.max_commits, commit_count=repo.commit_count, pr_count=repo.pr_count,
+                   max_commits=repo.max_commits, skip_commits=repo.skip_commits or 0,
+                   commit_count=repo.commit_count, pr_count=repo.pr_count,
                    created_at=as_utc(repo.created_at), ready_at=as_utc(repo.ready_at),
                    expires_at=as_utc(repo.expires_at))
 
@@ -103,6 +105,41 @@ def list_repos(user: User = Depends(verified_user), db: Session = Depends(get_db
     return [repo_out(r) for r in repos]
 
 
+def _github_token_for(db: Session, user: User) -> str | None:
+    """The user's own GitHub token when connected (it can see their private repositories)."""
+    if not user.github_token_enc:
+        return None
+    try:
+        return github.user_token(db, user)
+    except github.GitHubNotConnected:
+        return None
+
+
+@router.get("/range-preview", response_model=RangePreviewOut)
+def range_preview(url: str, skip: int = Q(0, ge=0, le=MAX_COMMIT_REACH), count: int = Q(100, ge=1, le=2000),
+                  user: User = Depends(verified_user), db: Session = Depends(get_db)):
+    """How many commits a repository has, and which commits a range would start and end at."""
+    m = GITHUB_URL.match(url.strip())
+    if not m:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Enter a GitHub repository URL")
+    full_name = f"{m.group(2)}/{m.group(3)}"
+    token = _github_token_for(db, user) or get_settings().github_token or None
+    try:
+        total = github.commit_total(full_name, token)
+        if total is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"Couldn't find {full_name} on GitHub")
+        first = min(skip + 1, total)
+        last = min(skip + count, total)
+        newest = github.commit_at(full_name, first, token) if total else None
+        oldest = github.commit_at(full_name, last, token) if total and last != first else newest
+    except github.GitHubUnavailable:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                            "GitHub isn't answering right now, so the range can't be previewed. You can still ingest it.")
+    return RangePreviewOut(full_name=full_name, total=total, reach=MAX_COMMIT_REACH,
+                           newest=CommitBriefOut(**newest) if newest else None,
+                           oldest=CommitBriefOut(**oldest) if oldest else None)
+
+
 @router.post("", response_model=RepoOut, status_code=status.HTTP_202_ACCEPTED)
 def create_repo(body: RepoIn, tasks: BackgroundTasks,
                 user: User = Depends(verified_user), db: Session = Depends(get_db)):
@@ -111,12 +148,7 @@ def create_repo(body: RepoIn, tasks: BackgroundTasks,
     owner, name = m.group(2), m.group(3)
     full_name = f"{owner}/{name}"
 
-    token = None
-    if user.github_token_enc:
-        try:
-            token = github.user_token(db, user)
-        except github.GitHubNotConnected:
-            token = None
+    token = _github_token_for(db, user)
     visibility = github.repo_visibility(full_name, token or get_settings().github_token or None)
     if visibility == "missing":
         hint = ("If it's private, give the GitHub App access to it." if token
@@ -125,7 +157,8 @@ def create_repo(body: RepoIn, tasks: BackgroundTasks,
 
     repo = Repo(user_id=user.id, url=f"https://github.com/{full_name}", full_name=full_name,
                 is_private=visibility == "private",
-                namespace=f"u{user.id}_{uuid.uuid4().hex[:12]}", max_commits=body.max_commits)
+                namespace=f"u{user.id}_{uuid.uuid4().hex[:12]}", max_commits=body.max_commits,
+                skip_commits=body.skip_commits)
     db.add(repo)
     db.add(IngestEvent(user_id=user.id))
     db.commit()

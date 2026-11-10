@@ -66,3 +66,10 @@ export const INGEST_STAGES: { status: RepoStatus; label: string }[] = [
 ];
 
 export const isIngesting = (s: RepoStatus) => s !== "ready" && s !== "failed";
+
+/** "300 commits", or "commits 101–400" when a range further back was ingested. */
+export function commitSpan(repo: { commit_count: number; skip_commits?: number }) {
+  const skip = repo.skip_commits ?? 0;
+  return skip ? `commits ${formatNumber(skip + 1)}–${formatNumber(skip + repo.commit_count)}`
+    : `${formatNumber(repo.commit_count)} commits`;
+}

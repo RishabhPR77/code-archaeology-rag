@@ -16,11 +16,12 @@ class CommitRecord:
     diff: str
     parent_shas: list
 
-def load_commits(repo_path: str, max_count: int = 300) -> list[CommitRecord]:
+def load_commits(repo_path: str, max_count: int = 300, skip: int = 0) -> list[CommitRecord]:
+    """The newest `max_count` commits, after skipping the newest `skip` (for a range further back)."""
     repo = git.Repo(repo_path)
     records = []
 
-    for commit in repo.iter_commits(max_count=max_count):
+    for commit in repo.iter_commits(max_count=max_count, skip=skip):
         try:
             if commit.parents:
                 diff_text = repo.git.diff(

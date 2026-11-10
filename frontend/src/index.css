@@ -152,6 +152,41 @@
 
 @keyframes shimmer { 100% { transform: translateX(100%); } }
 
+/* Cards rise in one after another (set --i to each card's position)... */
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+/* "backwards", not "both": a finished animation must not pin transform and block the hover lift */
+.card-in { animation: card-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) backwards; animation-delay: calc(var(--i, 0) * 70ms); }
+
+/* ...and lift towards the pointer on hover, with a soft accent glow */
+.card-lift {
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.25s ease, border-color 0.25s ease;
+}
+.card-lift:hover {
+  transform: translateY(-4px);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  box-shadow: 0 2px 4px rgb(15 26 36 / 0.04), 0 16px 32px -10px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* Landing sections fade up as they scroll into view; <Reveal> adds .is-visible */
+.reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1), transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: calc(var(--i, 0) * 80ms);
+}
+.reveal.is-visible { opacity: 1; transform: none; }
+
+/* A light sweeping across an ingest progress bar */
+.progress-sweep { position: relative; overflow: hidden; }
+.progress-sweep::after {
+  content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.5), transparent);
+  animation: shimmer 1.4s infinite;
+}
+
 /* Landing-page walkthrough cursor */
 @keyframes demo-ripple {
   from { transform: scale(0.4); opacity: 0.9; }
@@ -161,4 +196,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  .reveal { opacity: 1; transform: none; }
+  .card-lift:hover { transform: none; }
 }

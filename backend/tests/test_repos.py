@@ -31,7 +31,7 @@ ORIGINS = [{"sha": "a1b2c3d", "message": "fix session cookie expiry bug", "autho
 @pytest.fixture(autouse=True)
 def fake_ingestion(monkeypatch):
     monkeypatch.setattr(ingest.git.Repo, "clone_from", lambda *a, **k: None)
-    monkeypatch.setattr(ingest, "load_commits", lambda path, max_count: COMMITS)
+    monkeypatch.setattr(ingest, "load_commits", lambda path, max_count, skip=0: COMMITS)
     monkeypatch.setattr(ingest, "fetch_prs", lambda *a, **k: FetchResult(prs=[PR], warnings=[]))
     monkeypatch.setattr(ingest, "find_bug_origins", lambda path, commits: ORIGINS)
 
@@ -100,8 +100,10 @@ def test_ask_requires_model_then_uses_users_provider(user_client):
 
     history = user_client.get(f"/api/repos/{rid}/queries").json()
     assert [h["question"] for h in history] == ["why was oauth login added?"]
-    assert user_client.delete(f"/api/repos/{rid}/queries").status_code == 204
+    assert len(user_client.get(f"/api/repos/{rid}/chats").json()) == 1
+    assert user_client.delete(f"/api/repos/{rid}/queries").status_code == 204   # "Delete all chats"
     assert user_client.get(f"/api/repos/{rid}/queries").json() == []
+    assert user_client.get(f"/api/repos/{rid}/chats").json() == []
 
 
 def test_only_pr_filter(user_client):
@@ -484,3 +486,66 @@ def test_stopped_answers_are_validated_and_private(client):
     assert client.post(f"/api/repos/{rid}/ask/stopped", json={"question": "why?!", "answer": "x"}).status_code == 404
     assert client.post(f"/api/repos/{mine}/ask/stopped",
                        json={"question": "why?!", "answer": "x", "conversation_id": chat}).status_code == 404
+
+
+def test_profile_counts_activity_and_the_name_can_change(user_client):
+    empty = user_client.get("/api/auth/profile").json()
+    assert empty == {"repos": 0, "ready_repos": 0, "commits_indexed": 0, "prs_linked": 0, "questions": 0,
+                     "chats": 0, "recent": []}
+    rid = _ready_repo(user_client)["id"]
+    _connect_model(user_client)
+    user_client.post(f"/api/repos/{rid}/ask", json={"question": "why was oauth login added?"})
+    p = user_client.get("/api/auth/profile").json()
+    assert (p["repos"], p["ready_repos"], p["commits_indexed"], p["prs_linked"]) == (1, 1, 3, 1)
+    assert p["questions"] == 1 and p["chats"] == 1
+    assert p["recent"][0]["question"] == "why was oauth login added?" and p["recent"][0]["repo"] == "pallets/flask"
+
+    r = user_client.patch("/api/auth/me", json={"name": "  Ada Lovelace "})
+    assert r.status_code == 200 and r.json()["user"]["name"] == "Ada Lovelace"
+    assert user_client.patch("/api/auth/me", json={"name": "   "}).status_code == 422
+
+
+def test_a_range_further_back_is_cloned_deep_enough_and_remembered(user_client, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(ingest.git.Repo, "clone_from", lambda url, path, **kw: seen.update(depth=kw["depth"]))
+    monkeypatch.setattr(ingest, "load_commits", lambda path, max_count, skip=0: seen.update(skip=skip) or COMMITS)
+    r = user_client.post("/api/repos", json={"url": "https://github.com/pallets/flask", "max_commits": 50,
+                                             "skip_commits": 100})
+    assert r.status_code == 202, r.text
+    repo = user_client.get(f"/api/repos/{r.json()['id']}").json()
+    assert repo["status"] == "ready" and repo["skip_commits"] == 100
+    assert seen == {"depth": 100 + 50 * 2, "skip": 100}    # commits 101-150, each with its parent
+
+    seen.clear()
+    assert user_client.post(f"/api/repos/{repo['id']}/resync").status_code == 202
+    assert seen["skip"] == 100                                 # a re-sync keeps the same range
+
+
+def test_a_range_cant_reach_too_far_back(user_client):
+    r = user_client.post("/api/repos", json={"url": "https://github.com/pallets/flask", "max_commits": 100,
+                                             "skip_commits": 4950})
+    assert r.status_code == 422 and "5,000" in r.text
+
+
+def test_range_preview_shows_where_a_range_starts_and_ends(user_client, monkeypatch):
+    from app.services import github
+    monkeypatch.setattr(github, "commit_total", lambda name, token: 1234 if name == "pallets/flask" else None)
+    monkeypatch.setattr(github, "commit_at", lambda name, n, token: {
+        "number": n, "sha": f"{n:07d}", "message": f"commit {n}", "date": "2025-01-01T00:00:00Z"})
+
+    p = user_client.get("/api/repos/range-preview", params={"url": "https://github.com/pallets/flask",
+                                                            "skip": 100, "count": 50}).json()
+    assert p["total"] == 1234 and p["reach"] == 5000
+    assert p["newest"]["number"] == 101 and p["oldest"]["number"] == 150
+    # A range past the end stops at the oldest commit
+    p = user_client.get("/api/repos/range-preview", params={"url": "https://github.com/pallets/flask",
+                                                            "skip": 1200, "count": 100}).json()
+    assert p["oldest"]["number"] == 1234
+    missing = user_client.get("/api/repos/range-preview", params={"url": "https://github.com/nobody/nothing"})
+    assert missing.status_code == 404
+
+    def down(*a):
+        raise github.GitHubUnavailable("rate limited")
+    monkeypatch.setattr(github, "commit_total", down)
+    r = user_client.get("/api/repos/range-preview", params={"url": "https://github.com/pallets/flask"})
+    assert r.status_code == 503 and "still ingest" in r.json()["detail"]

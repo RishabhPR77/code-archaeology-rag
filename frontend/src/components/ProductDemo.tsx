@@ -1,5 +1,5 @@
 import {
-  ArrowUp, Check, File as FileIcon, FolderGit2, Globe, LayoutDashboard, Loader2, Lock, Plus, Search, Settings, Sparkles,
+  ArrowUp, Check, ChevronDown, File as FileIcon, Globe, Loader2, Lock, Plus, Search, Sparkles, Square,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
@@ -8,7 +8,7 @@ import { GitHubIcon, LogoMark, ProviderMark } from "./brand";
 
 /*
  * An animated walkthrough of the app: a fake cursor moves, clicks and types through
- * four scenes on a loop. Everything is drawn at a fixed 880x500 "canvas" and scaled
+ * five scenes on a loop. Everything is drawn at a fixed 880x500 "canvas" and scaled
  * to fit, so cursor targets are measured in canvas coordinates. The repository and
  * people shown are fictional.
  */
@@ -19,10 +19,12 @@ const H = 500;
 const SCENES = [
   { id: "connect", title: "Connect your model",
     body: "Paste an API key from Anthropic, OpenAI, Gemini, Groq or OpenRouter, then pick any model from its live list." },
-  { id: "ingest", title: "Ingest a repository",
+  { id: "ingest", title: "Add a repository",
     body: "Choose one of your GitHub repositories, private ones included, or paste any public URL." },
   { id: "ask", title: "Ask why",
-    body: "Ask in plain English. Answers cite the exact commits and pull requests they come from." },
+    body: "Ask in plain English. The answer streams in and cites the exact commits and pull requests it comes from." },
+  { id: "suspects", title: "Find what broke",
+    body: "Describe a bug or paste a stack trace. The three most likely culprit commits come back, each with the reasons it was flagged." },
   { id: "explore", title: "Explore the history",
     body: "See busy weeks and hot spots, or search for any file and trace how it changed." },
 ] as const;
@@ -43,6 +45,16 @@ const ANSWER = "The refactor in `3f9c2a1` moved token refresh out of `CheckoutSe
   "traced double charges to sessions expiring mid-payment. The review on PR #412 asked for an idempotent " +
   "retry path, added in `a81e0c4`.";
 const SOURCES = ["3f9c2a1 · j.chen", "a81e0c4 · m.okafor", "PR #412"];
+const REPORT = "Customers are charged twice when a payment is retried after the session expires.\n" +
+  "  at retryPayment (payments/retry.ts:42)";
+const SUSPECTS = [
+  { sha: "7d2e4b1", type: "Feature", msg: "Retry failed payments automatically", score: 84,
+    reasons: ["Changed code your report mentions: retryPayment", "Changed payments/retry.ts, which your report names"] },
+  { sha: "0c1d9fa", type: "Feature", msg: "Add checkout session", score: 71,
+    reasons: ["Already traced as the cause of 2 earlier bug fixes", "A large change (1,240 lines)"] },
+  { sha: "9a1f3c7", type: "Refactor", msg: "Share session tokens between tabs", score: 58,
+    reasons: ["Partly matches your description", "Changed checkout/session.ts"] },
+] as const;
 const BARS = [3, 5, 4, 8, 6, 11, 7, 9, 14, 10, 6, 12];
 const HOT = [["checkout/session.ts", 100], ["payments/retry.ts", 74], ["api/orders.ts", 58], ["checkout/cart.ts", 41]] as const;
 const TRACE_FILES = [
@@ -59,18 +71,21 @@ const TRACE_COMMITS = [
   ["0c1d9fa", "Add checkout session"], ["5e2b8c0", "Fix double charge on retry"],
   ["3f9c2a1", "Move token refresh out"], ["a81e0c4", "Add idempotent retry"],
 ] as const;
+const TABS = ["Overview", "Ask", "File timeline", "Who broke it?", "Hot files"] as const;
 
 interface DemoState {
   expanded: boolean; keyText: string; saving: boolean; connected: boolean; model: string | null; toast: string | null;
   dialog: boolean; picked: string | null; ingesting: boolean; stage: number;
-  question: string; asked: boolean; thinking: boolean; answer: number; sources: number;
+  question: string; asked: boolean; searching: boolean; found: boolean; answer: number; sources: number;
+  report: string; finding: boolean; suspects: number;
   grow: boolean; timelineTab: boolean; pickerOpen: boolean; pickerText: string; traced: boolean;
 }
 
 const START: DemoState = {
   expanded: false, keyText: "", saving: false, connected: false, model: null, toast: null,
   dialog: false, picked: null, ingesting: false, stage: -1,
-  question: "", asked: false, thinking: false, answer: 0, sources: 0,
+  question: "", asked: false, searching: false, found: false, answer: 0, sources: 0,
+  report: "", finding: false, suspects: 0,
   grow: false, timelineTab: false, pickerOpen: false, pickerText: "", traced: false,
 };
 
@@ -78,8 +93,9 @@ const START: DemoState = {
 const FINAL: Record<number, Partial<DemoState>> = {
   0: { expanded: true, keyText: "sk-ant-••••••••••••••••", connected: true, model: MODELS[1] },
   1: { picked: REPOS[0].name, ingesting: true, stage: STAGES.length - 1 },
-  2: { question: QUESTION, asked: true, answer: ANSWER.length, sources: SOURCES.length },
-  3: { grow: true, timelineTab: true, pickerText: TRACE_FILES[0].path, traced: true },
+  2: { question: QUESTION, asked: true, found: true, answer: ANSWER.length, sources: SOURCES.length },
+  3: { report: REPORT, suspects: SUSPECTS.length },
+  4: { grow: true, timelineTab: true, pickerText: TRACE_FILES[0].path, traced: true },
 };
 
 class Cancelled extends Error {}
@@ -191,7 +207,7 @@ export function ProductDemo() {
         patch({ model: MODELS[1] });
         await sleep(1600);
       },
-      async () => {  // Ingest
+      async () => {  // Add a repository
         await move("new-repo");
         await click();
         patch({ dialog: true });
@@ -213,12 +229,14 @@ export function ProductDemo() {
         await type(QUESTION, (question) => patch({ question }), 38);
         await move("send", 500);
         await click();
-        patch({ asked: true, thinking: true });
-        await sleep(900);
-        patch({ thinking: false });
+        patch({ asked: true, searching: true });
+        await sleep(800);
+        patch({ searching: false, found: true });
+        await sleep(700);
+        await move("stop", 500);
         for (let i = 4; i <= ANSWER.length; i += 4) {
           patch({ answer: i });
-          await sleep(22);
+          await sleep(24);
         }
         patch({ answer: ANSWER.length });
         for (let i = 1; i <= SOURCES.length; i++) {
@@ -227,6 +245,22 @@ export function ProductDemo() {
         }
         await move("source-0", 700);
         await sleep(1500);
+      },
+      async () => {  // Find what broke
+        await move("report");
+        await click();
+        await type(REPORT, (report) => patch({ report }), 22);
+        await move("find", 550);
+        await click();
+        patch({ finding: true });
+        await sleep(900);
+        patch({ finding: false });
+        for (let i = 1; i <= SUSPECTS.length; i++) {
+          patch({ suspects: i });
+          await sleep(320);
+        }
+        await move("suspect-0", 800);
+        await sleep(2200);
       },
       async () => {  // Explore
         patch({ grow: true });
@@ -276,23 +310,19 @@ export function ProductDemo() {
           style={{ width: W, height: H, transform: `scale(${scale})`, transformOrigin: "top left" }}
         >
           <Chrome />
-          <div className="absolute top-9 bottom-0 left-0 flex w-14 flex-col items-center gap-4 border-r border-border bg-surface pt-4 text-subtle">
-            <LogoMark className="size-6" />
-            <LayoutDashboard className={cn("size-4", scene === 1 && "text-accent")} />
-            <FolderGit2 className={cn("size-4", (scene === 2 || scene === 3) && "text-accent")} />
-            <Settings className={cn("size-4", scene === 0 && "text-accent")} />
-          </div>
-          <div className="absolute top-9 right-0 bottom-0 left-14 p-6">
+          <AppBar scene={scene} s={s} t={t} />
+          <div className="absolute inset-x-0 top-20 bottom-0 px-7 pt-4 pb-5">
             {scene === 0 && <ConnectScene s={s} t={t} />}
             {scene === 1 && <IngestScene s={s} t={t} />}
             {scene === 2 && <AskScene s={s} t={t} />}
-            {scene === 3 && <ExploreScene s={s} t={t} />}
+            {scene === 3 && <SuspectsScene s={s} t={t} />}
+            {scene === 4 && <ExploreScene s={s} t={t} />}
           </div>
           {!reduced && <Cursor x={cursor.x} y={cursor.y} click={cursor.click} />}
         </div>
       </div>
 
-      <div className="mt-8 grid grid-cols-2 gap-2 sm:grid-cols-4" role="tablist" aria-label="Product walkthrough">
+      <div className="mt-8 grid grid-cols-2 gap-2 sm:grid-cols-5" role="tablist" aria-label="Product walkthrough">
         {SCENES.map((sc, i) => (
           <button
             key={sc.id}
@@ -328,6 +358,39 @@ function Chrome() {
   );
 }
 
+/** The app's top bar: logo, the open repository, the model, New repository and the account. */
+function AppBar({ scene, s, t }: { scene: number; s: DemoState; t: Reg }) {
+  const inRepo = scene >= 2;
+  const model = scene > 0 || s.model;
+  return (
+    <div className="absolute inset-x-0 top-9 flex h-11 items-center gap-2 border-b border-border bg-surface px-5">
+      <LogoMark className="size-6" />
+      <span className="text-[13px] font-semibold">Code Archaeologist</span>
+      {inRepo && (
+        <>
+          <span className="text-border-strong">/</span>
+          <span className="flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px]">
+            <span className="grid size-5 place-items-center rounded-md bg-accent text-[9px] font-bold text-accent-fg">A</span>
+            <span className="text-subtle">acme /</span><b>storefront</b>
+            <ChevronDown className="size-3 text-subtle" />
+          </span>
+        </>
+      )}
+      <div className="flex-1" />
+      {model && (
+        <span className="flex items-center gap-1.5 rounded-lg border border-border px-1.5 py-0.5 animate-fade-up">
+          <ProviderMark id="anthropic" className="size-5 text-[8px]" />
+          <span className="font-mono text-[10px] text-muted">{MODELS[1]}</span>
+        </span>
+      )}
+      <span ref={scene === 1 ? t("new-repo") : undefined}>
+        <Btn primary className="h-7"><Plus className="size-3.5" /> New repository</Btn>
+      </span>
+      <span className="grid size-7 place-items-center rounded-full bg-accent-soft text-[11px] font-semibold text-accent">J</span>
+    </div>
+  );
+}
+
 function Cursor({ x, y, click }: { x: number; y: number; click: number }) {
   return (
     <div className="pointer-events-none absolute top-0 left-0 z-50 transition-transform duration-700 ease-in-out"
@@ -352,18 +415,40 @@ function Btn({ children, primary, className, r }: { children: ReactNode; primary
   );
 }
 
+function RepoTitle({ tabs = TABS, active, r }: {
+  tabs?: readonly string[]; active: string; r?: (tab: string) => ((el: HTMLElement | null) => void) | undefined;
+}) {
+  return (
+    <>
+      <div className="flex items-center gap-2">
+        <span className="font-mono text-[15px] font-semibold">acme/storefront</span>
+        <span className="rounded-md bg-warning-soft px-1.5 py-0.5 text-[10px] text-warning"><Lock className="mr-0.5 inline size-2.5" />Private</span>
+        <span className="rounded-md bg-success-soft px-1.5 py-0.5 text-[10px] text-success">Ready</span>
+      </div>
+      <div className="mt-2.5 flex gap-4 border-b border-border text-[12px]">
+        {tabs.map((tab) => (
+          <span key={tab} ref={r?.(tab)}
+                className={cn("-mb-px border-b-2 pb-2 transition-colors", tab === active ? "border-accent text-text" : "border-transparent text-muted")}>
+            {tab}
+          </span>
+        ))}
+      </div>
+    </>
+  );
+}
+
 function ConnectScene({ s, t }: { s: DemoState; t: Reg }) {
   return (
     <div className="relative h-full">
       <p className="text-[17px] font-semibold">Model providers</p>
       <p className="mt-0.5 text-[12px] text-muted">Your own API key is used for every answer.</p>
-      <div className="mt-4 space-y-2">
+      <div className="mt-3 space-y-2">
         {PROVIDERS.map((p) => {
           const chosen = p.id === "anthropic";
           const open = chosen && s.expanded;
           return (
             <div key={p.id} className={cn("rounded-xl border bg-surface transition-colors", open ? "border-accent/40" : "border-border")}>
-              <div ref={chosen ? t("provider-anthropic") : undefined} className="flex items-center gap-3 px-3 py-2">
+              <div ref={chosen ? t("provider-anthropic") : undefined} className="flex items-center gap-3 px-3 py-1.5">
                 <ProviderMark id={p.id} className="size-7 text-[10px]" />
                 <span className="text-[13px] font-medium">{p.name}</span>
                 <span className={cn("rounded-md px-1.5 py-0.5 text-[10px] font-medium",
@@ -414,49 +499,47 @@ function ConnectScene({ s, t }: { s: DemoState; t: Reg }) {
 }
 
 function IngestScene({ s, t }: { s: DemoState; t: Reg }) {
+  const done = s.stage === STAGES.length - 1;
   return (
     <div className="relative h-full">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-[17px] font-semibold">Repositories</p>
-          <p className="mt-0.5 text-[12px] text-muted">Your ingested repositories live here.</p>
+      <p className="text-[12px] text-muted">Welcome back, Jo</p>
+      <p className="text-[17px] font-semibold">Your repositories</p>
+
+      <div className="mt-4 grid grid-cols-3 gap-3">
+        {s.ingesting && (
+          <div className="col-span-1 rounded-xl border border-border bg-surface p-3.5 shadow-card animate-fade-up">
+            <div className="flex items-start gap-2.5">
+              <span className="grid size-9 place-items-center rounded-lg bg-accent text-[13px] font-bold text-accent-fg">A</span>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] text-subtle">acme</p>
+                <p className="flex items-center gap-1 text-[13px] font-semibold">storefront <Lock className="size-3 text-warning" /></p>
+              </div>
+              <span className={cn("rounded-md px-1.5 py-0.5 text-[10px]", done ? "bg-success-soft text-success" : "bg-warning-soft text-warning")}>
+                {done ? "Ready" : "Ingesting"}
+              </span>
+            </div>
+            <div className="mt-3 flex items-center justify-between text-[10px]">
+              <span className={done ? "text-muted" : "text-warning"}>{done ? "Ingested just now" : STAGES[s.stage]}</span>
+              {!done && <span className="text-subtle">step {s.stage + 1} of {STAGES.length - 1}</span>}
+            </div>
+            <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-surface-3">
+              <div className={cn("h-full rounded-full transition-[width] duration-500", done ? "bg-success" : "progress-sweep bg-warning")}
+                   style={{ width: `${((s.stage + 1) / STAGES.length) * 100}%` }} />
+            </div>
+            <p className="mt-3 border-t border-border pt-2 text-[10px] text-subtle">{done ? "300 commits · 86 PRs" : "Reading history…"}</p>
+          </div>
+        )}
+        <div className="flex h-40 flex-col items-center justify-center rounded-xl border-2 border-dashed border-border-strong text-center">
+          <span className="grid size-8 place-items-center rounded-lg bg-accent-soft text-accent"><Plus className="size-4" /></span>
+          <p className="mt-2 text-[12px] font-semibold">Add a repository</p>
+          <p className="text-[10px] text-subtle">Paste a GitHub URL or pick one of yours</p>
         </div>
-        <Btn primary r={t("new-repo")}><Plus className="size-3.5" /> New repository</Btn>
       </div>
 
-      {!s.ingesting ? (
-        <div className="mt-6 grid h-56 place-items-center rounded-xl border border-dashed border-border-strong text-center">
-          <div>
-            <FolderGit2 className="mx-auto size-6 text-subtle" />
-            <p className="mt-2 text-[13px] font-medium">No repositories yet</p>
-          </div>
-        </div>
-      ) : (
-        <div className="mx-auto mt-6 w-[420px] rounded-xl border border-border bg-surface p-5 animate-fade-up">
-          <p className="flex items-center gap-2 text-[13px] font-semibold">
-            {s.stage < STAGES.length - 1 ? <Loader2 className="size-4 animate-spin text-accent" /> : <Check className="size-4 text-success" />}
-            {s.stage < STAGES.length - 1 ? "Ingesting acme/storefront" : "acme/storefront is ready"}
-            <Lock className="size-3 text-warning" />
-          </p>
-          <ol className="mt-4 space-y-2.5">
-            {STAGES.map((st, i) => (
-              <li key={st} className="flex items-center gap-2.5 text-[12px]">
-                <span className={cn("grid size-5 place-items-center rounded-full border text-[10px] transition-colors",
-                  i < s.stage || s.stage === STAGES.length - 1 ? "border-accent bg-accent text-accent-fg"
-                    : i === s.stage ? "border-accent bg-accent-soft text-accent" : "border-border text-subtle")}>
-                  {i < s.stage || s.stage === STAGES.length - 1 ? <Check className="size-3" strokeWidth={3} /> : i + 1}
-                </span>
-                <span className={i <= s.stage ? "text-text" : "text-subtle"}>{st}</span>
-              </li>
-            ))}
-          </ol>
-        </div>
-      )}
-
       {s.dialog && (
-        <div className="absolute inset-0 grid place-items-center bg-black/40 backdrop-blur-[2px]">
+        <div className="absolute -inset-x-7 -top-4 -bottom-5 grid place-items-center bg-black/40 backdrop-blur-[2px]">
           <div className="w-[440px] rounded-2xl border border-border bg-surface p-5 shadow-2xl animate-fade-up">
-            <p className="text-[14px] font-semibold">Ingest a repository</p>
+            <p className="text-[14px] font-semibold">Add a repository</p>
             <div className="mt-3 grid grid-cols-2 rounded-lg border border-border bg-surface-2 p-0.5 text-[12px]">
               <span className="flex items-center justify-center gap-1.5 rounded-md bg-surface-3 py-1 font-medium"><GitHubIcon className="size-3" /> Your GitHub</span>
               <span className="flex items-center justify-center gap-1.5 py-1 text-muted"><Globe className="size-3" /> Public URL</span>
@@ -494,20 +577,12 @@ function AnswerText({ text }: { text: string }) {
 }
 
 function AskScene({ s, t }: { s: DemoState; t: Reg }) {
+  const writing = s.asked && s.answer > 0 && s.answer < ANSWER.length;
   return (
     <div className="relative flex h-full flex-col">
-      <div className="flex items-center gap-2">
-        <span className="font-mono text-[15px] font-semibold">acme/storefront</span>
-        <span className="rounded-md bg-warning-soft px-1.5 py-0.5 text-[10px] text-warning"><Lock className="mr-0.5 inline size-2.5" />Private</span>
-        <span className="rounded-md bg-success-soft px-1.5 py-0.5 text-[10px] text-success">Ready</span>
-      </div>
-      <div className="mt-3 flex gap-4 border-b border-border text-[12px]">
-        {["Overview", "Ask", "File timeline", "Hot files", "Pull requests"].map((tab) => (
-          <span key={tab} className={cn("-mb-px border-b-2 pb-2", tab === "Ask" ? "border-accent text-text" : "border-transparent text-muted")}>{tab}</span>
-        ))}
-      </div>
+      <RepoTitle active="Ask" />
 
-      <div className="flex-1 space-y-3 overflow-hidden pt-4">
+      <div className="flex-1 space-y-3 overflow-hidden pt-3">
         {!s.asked ? (
           <div className="grid h-full place-items-center text-center">
             <div>
@@ -523,13 +598,24 @@ function AskScene({ s, t }: { s: DemoState; t: Reg }) {
               <div className="mb-2 flex items-center gap-2 text-[10px] text-subtle">
                 <ProviderMark id="anthropic" className="size-4 text-[7px]" />
                 <span className="font-mono">{MODELS[1]}</span>
+                {writing && (
+                  <span className="ml-auto inline-flex items-center gap-1.5 text-accent">
+                    <span className="size-1.5 animate-pulse rounded-full bg-accent" /> Writing…
+                  </span>
+                )}
               </div>
-              {s.thinking ? (
-                <div className="flex gap-1 py-2">
-                  {[0, 1, 2].map((i) => <span key={i} className="size-1.5 animate-bounce rounded-full bg-accent" style={{ animationDelay: `${i * 120}ms` }} />)}
+              {s.answer === 0 ? (
+                <div className="flex items-center gap-2 py-1 text-[11px] text-muted">
+                  <span className="flex gap-1">
+                    {[0, 1, 2].map((i) => <span key={i} className="size-1.5 animate-bounce rounded-full bg-accent" style={{ animationDelay: `${i * 120}ms` }} />)}
+                  </span>
+                  {s.found ? <>Found the relevant commits. Waiting for <span className="font-mono">{MODELS[1]}</span>…</> : "Searching this repository's history…"}
                 </div>
               ) : (
-                <p className="text-[12.5px] leading-relaxed"><AnswerText text={ANSWER.slice(0, s.answer)} /></p>
+                <p className="text-[12.5px] leading-relaxed">
+                  <AnswerText text={ANSWER.slice(0, s.answer)} />
+                  {writing && <span className="ml-0.5 inline-block h-3.5 w-1.5 translate-y-0.5 animate-pulse bg-accent" />}
+                </p>
               )}
               {s.sources > 0 && (
                 <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border pt-3">
@@ -548,9 +634,59 @@ function AskScene({ s, t }: { s: DemoState; t: Reg }) {
           {s.asked ? <span className="text-subtle">Ask a follow-up…</span> : s.question || <span className="text-subtle">Why was the auth module refactored?</span>}
           {!s.asked && s.question && <span className="ml-0.5 h-4 w-px animate-pulse bg-text" />}
         </span>
-        <span ref={t("send")} className={cn("grid size-8 place-items-center rounded-lg bg-accent text-accent-fg", !s.question && "opacity-50")}>
-          <ArrowUp className="size-3.5" />
+        {s.asked && (s.answer < ANSWER.length) ? (
+          <span ref={t("stop")} className="grid size-8 place-items-center rounded-lg border border-border bg-surface-2 text-text" title="Stop">
+            <Square className="size-3 fill-current" />
+          </span>
+        ) : (
+          <span ref={t("send")} className={cn("grid size-8 place-items-center rounded-lg bg-accent text-accent-fg", !s.question && "opacity-50")}>
+            <ArrowUp className="size-3.5" />
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SuspectsScene({ s, t }: { s: DemoState; t: Reg }) {
+  return (
+    <div className="flex h-full flex-col">
+      <RepoTitle active="Who broke it?" />
+      <div className="mt-3 flex gap-3">
+        <span ref={t("report")}
+              className={cn("block h-[52px] flex-1 overflow-hidden rounded-lg border bg-surface px-3 py-2 text-[11.5px] leading-snug whitespace-pre-wrap",
+                s.report ? "border-accent" : "border-border")}>
+          {s.report ? (
+            <>{s.report.split("\n")[0]}{s.report.includes("\n") && <span className="block font-mono text-[10.5px] text-muted">{s.report.split("\n")[1]}</span>}</>
+          ) : <span className="text-subtle">Describe the bug, with any error or stack trace</span>}
         </span>
+        <span ref={t("find")}>
+          <Btn primary className="h-[52px] px-4">{s.finding && <Loader2 className="size-3.5 animate-spin" />} Find suspects</Btn>
+        </span>
+      </div>
+
+      <div className="mt-3 flex-1 space-y-2">
+        {SUSPECTS.slice(0, s.suspects).map((x, i) => (
+          <div key={x.sha} ref={i === 0 ? t("suspect-0") : undefined}
+               className="rounded-xl border border-border bg-surface px-3.5 py-2.5 animate-fade-up">
+            <div className="flex items-center gap-2 text-[11px]">
+              <span className={cn("rounded-md px-1.5 py-0.5 text-[10px] font-medium", i === 0 ? "bg-danger-soft text-danger" : "bg-surface-2 text-muted")}>
+                #{i + 1}{i === 0 && " Most likely"}
+              </span>
+              <span className="font-mono font-semibold text-accent">{x.sha}</span>
+              <span className="rounded-md bg-accent-soft px-1.5 py-0.5 text-[9px] font-semibold text-accent uppercase">{x.type}</span>
+              <span className="truncate font-medium">{x.msg}</span>
+              <span className="ml-auto shrink-0 text-[10px] text-subtle">score {x.score}/100</span>
+            </div>
+            <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-surface-3">
+              <div className="h-full origin-left rounded-full bg-accent transition-transform duration-700 ease-out"
+                   style={{ width: `${x.score}%`, transform: `scaleX(${s.suspects > i ? 1 : 0})` }} />
+            </div>
+            <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-[10.5px] text-muted">
+              {x.reasons.map((why) => <span key={why} className="inline-flex items-center gap-1"><Check className="size-3 text-accent" />{why}</span>)}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -567,27 +703,17 @@ function ExploreScene({ s, t }: { s: DemoState; t: Reg }) {
   const q = s.pickerOpen ? s.pickerText.toLowerCase() : "";
   return (
     <div className="h-full">
-      <div className="flex items-center gap-2">
-        <span className="font-mono text-[15px] font-semibold">acme/storefront</span>
-        <span className="rounded-md bg-success-soft px-1.5 py-0.5 text-[10px] text-success">Ready</span>
-      </div>
-      <div className="mt-3 flex gap-4 border-b border-border text-[12px]">
-        {["Overview", "Ask", "File timeline", "Hot files", "Pull requests"].map((tab) => (
-          <span key={tab} ref={tab === "File timeline" ? t("tab-timeline") : undefined}
-                className={cn("-mb-px border-b-2 pb-2 transition-colors",
-                  tab === (s.timelineTab ? "File timeline" : "Overview") ? "border-accent text-text" : "border-transparent text-muted")}>
-            {tab}
-          </span>
-        ))}
-      </div>
+      <RepoTitle active={s.timelineTab ? "File timeline" : "Overview"}
+                 r={(tab) => (tab === "File timeline" ? t("tab-timeline") : undefined)} />
 
       {!s.timelineTab ? (
         <>
-          <div className="mt-4 grid grid-cols-4 gap-3">
-            {[["Commits", 100], ["Contributors", 7], ["Files touched", 64], ["Linked PRs", 24]].map(([label, n]) => (
-              <div key={label} className="rounded-xl border border-border bg-surface p-3">
+          <div className="mt-3 grid grid-cols-4 gap-3">
+            {[["Commits", 300], ["Contributors", 7], ["Files touched", 64], ["Linked PRs", 86]].map(([label, n], i) => (
+              <div key={label} className="rounded-xl border border-border bg-surface p-3 transition-all duration-500"
+                   style={{ opacity: s.grow ? 1 : 0.2, transform: s.grow ? "none" : "translateY(8px)", transitionDelay: `${i * 80}ms` }}>
                 <p className="text-[10px] text-muted">{label}</p>
-                <p className="mt-1 text-[20px] font-semibold transition-opacity duration-700" style={{ opacity: s.grow ? 1 : 0.15 }}>{n}</p>
+                <p className="mt-1 text-[20px] font-semibold">{n}</p>
               </div>
             ))}
           </div>
@@ -595,7 +721,7 @@ function ExploreScene({ s, t }: { s: DemoState; t: Reg }) {
           <div className="mt-3 grid grid-cols-5 gap-3">
             <div ref={t("chart")} className="col-span-3 rounded-xl border border-border bg-surface p-3">
               <p className="text-[11px] font-medium">Commit activity</p>
-              <div className="mt-3 flex h-36 items-end gap-1.5">
+              <div className="mt-3 flex h-32 items-end gap-1.5">
                 {BARS.map((b, i) => (
                   <span key={i} className="flex-1 origin-bottom rounded-t bg-accent/80 transition-transform duration-700 ease-out"
                         style={{ height: `${(b / max) * 100}%`, transform: `scaleY(${s.grow ? 1 : 0.05})`, transitionDelay: `${i * 45}ms` }} />
@@ -619,7 +745,7 @@ function ExploreScene({ s, t }: { s: DemoState; t: Reg }) {
           </div>
         </>
       ) : (
-        <div className="relative mt-4 animate-fade-up">
+        <div className="relative mt-3 animate-fade-up">
           <div className="flex gap-2">
             <span ref={t("picker")}
                   className={cn("flex h-9 flex-1 items-center gap-2 rounded-lg border bg-surface px-3 font-mono text-[12px] transition-colors",

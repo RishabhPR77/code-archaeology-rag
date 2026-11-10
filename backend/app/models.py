@@ -69,6 +69,8 @@ class Repo(Base):
     is_private:    Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     namespace:     Mapped[str] = mapped_column(String(200), unique=True)
     max_commits:   Mapped[int] = mapped_column(Integer)
+    # Newest commits skipped, to ingest a window further back (0 = the latest commits)
+    skip_commits:  Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     status:        Mapped[str] = mapped_column(String(20), default="queued")
     stage_message: Mapped[str] = mapped_column(String(300), default="Waiting to start")
     error:         Mapped[str | None] = mapped_column(Text)

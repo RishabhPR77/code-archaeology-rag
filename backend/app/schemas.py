@@ -3,7 +3,7 @@ import re
 from datetime import date, datetime, timezone
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 GITHUB_URL = re.compile(r"^https?://(www\.)?github\.com/([\w.-]+)/([\w.-]+?)(\.git)?/?$")
 
@@ -70,6 +70,36 @@ class LimitsOut(BaseModel):
 class MeOut(BaseModel):
     user:   UserOut
     limits: LimitsOut
+
+
+class NameIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("Name can't be blank")
+        return v.strip()
+
+
+class RecentQuestionOut(BaseModel):
+    question:   str
+    repo_id:    str
+    repo:       str           # owner/name
+    chat_id:    int | None
+    created_at: datetime
+
+
+class ProfileOut(BaseModel):
+    """What a user has done here, for their profile page."""
+    repos:           int
+    ready_repos:     int
+    commits_indexed: int
+    prs_linked:      int
+    questions:       int
+    chats:           int
+    recent:          list[RecentQuestionOut]
 
 
 class AuthConfigOut(BaseModel):
@@ -149,9 +179,22 @@ class ActiveProviderIn(BaseModel):
 
 
 # ── Repos ──────────────────────────────────────────────────────────
+# How far back a commit range may reach, counted from the newest commit. Deeper clones get slow
+# and large on a small server.
+MAX_COMMIT_REACH = 5000
+
+
 class RepoIn(BaseModel):
-    url:         str
-    max_commits: int = Field(default=100, ge=10, le=2000)
+    url:          str
+    max_commits:  int = Field(default=100, ge=10, le=2000)
+    # Commit 1 is the newest. Skipping 100 and taking 100 ingests commits 101-200.
+    skip_commits: int = Field(default=0, ge=0, le=MAX_COMMIT_REACH)
+
+    @model_validator(mode="after")
+    def _within_reach(self):
+        if self.skip_commits + self.max_commits > MAX_COMMIT_REACH:
+            raise ValueError(f"A range can reach back at most {MAX_COMMIT_REACH:,} commits")
+        return self
 
     @field_validator("url")
     @classmethod
@@ -172,11 +215,28 @@ class RepoOut(BaseModel):
     error:         str | None
     warnings:      list[str]
     max_commits:   int
+    skip_commits:  int = 0
     commit_count:  int
     pr_count:      int
     created_at:    datetime
     ready_at:      datetime | None
     expires_at:    datetime | None
+
+
+class CommitBriefOut(BaseModel):
+    number:  int        # 1 = the newest commit
+    sha:     str
+    message: str        # first line
+    date:    str | None
+
+
+class RangePreviewOut(BaseModel):
+    """What a commit range covers, so the user can see it before ingesting."""
+    full_name: str
+    total:     int                      # commits on the default branch
+    reach:     int                      # how far back a range may go
+    newest:    CommitBriefOut | None    # the first commit in the range
+    oldest:    CommitBriefOut | None    # the last commit in the range
 
 
 class AskIn(BaseModel):

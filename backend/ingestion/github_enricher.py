@@ -37,8 +37,9 @@ def _check_rate(g) -> int:
             return -1
 
 def fetch_prs(repo_name: str, max_prs: int = 200, token: str | None = None,
-              since: datetime | None = None, details: bool = True) -> FetchResult:
-    """Fetch merged PRs. `since` skips PRs merged before the oldest ingested commit.
+              since: datetime | None = None, details: bool = True, until: datetime | None = None) -> FetchResult:
+    """Fetch merged PRs. `since` skips PRs merged before the oldest ingested commit, and `until` those
+    merged after the newest one (for a range further back in history), so they don't use up `max_prs`.
     `details=False` skips review comments, reviews and discussion (three extra requests per PR)."""
     g = Github(auth=Auth.Token(token)) if token else Github()
     repo = g.get_repo(repo_name)
@@ -47,6 +48,9 @@ def fetch_prs(repo_name: str, max_prs: int = 200, token: str | None = None,
     if since is not None and since.tzinfo is None:
         since = since.replace(tzinfo=timezone.utc)
     cutoff = since - timedelta(days=1) if since else None
+    if until is not None and until.tzinfo is None:
+        until = until.replace(tzinfo=timezone.utc)
+    ceiling = until + timedelta(days=1) if until else None
 
     remaining = _check_rate(g)
     if remaining != -1 and remaining < 20:
@@ -66,6 +70,8 @@ def fetch_prs(repo_name: str, max_prs: int = 200, token: str | None = None,
             break
         if not pr.merged_at:
             continue
+        if ceiling and pr.merged_at > ceiling:
+            continue  # newer than the range; its commits weren't ingested
         # Older PRs can't match any ingested commit, so skip their detail calls
         if cutoff and pr.merged_at < cutoff:
             old_streak += 1

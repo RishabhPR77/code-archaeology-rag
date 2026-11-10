@@ -353,7 +353,7 @@ def test_private_repo_clones_with_token_in_env_not_url(client, web, monkeypatch)
     monkeypatch.setattr(github, "repo_visibility", lambda full_name, token: "private" if token == "ghu_A" else "missing")
     monkeypatch.setattr(ingest_service.git.Repo, "clone_from",
                         lambda url, path, **kw: seen.update(url=url, env=kw.get("env")))
-    monkeypatch.setattr(ingest_service, "load_commits", lambda path, max_count: COMMITS)
+    monkeypatch.setattr(ingest_service, "load_commits", lambda path, max_count, skip=0: COMMITS)
     def fake_fetch_prs(*a, **k):
         seen["pr_token"] = k.get("token")
         return FetchResult(prs=[], warnings=[])
