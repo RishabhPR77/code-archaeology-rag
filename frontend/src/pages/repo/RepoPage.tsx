@@ -67,7 +67,7 @@ function IngestProgress({ repo }: { repo: Repo }) {
           );
         })}
       </ol>
-      <p className="mt-6 text-xs text-subtle">You can leave this page — ingestion keeps running in the background.</p>
+      <p className="mt-6 text-xs text-subtle">Keep this page open until it's ready. On free hosting the server can go to sleep when nobody has the site open, which stops the ingest.</p>
     </Card>
   );
 }

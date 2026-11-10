@@ -21,9 +21,9 @@ You bring your own model: connect an **Anthropic, OpenAI, Google Gemini, Groq or
 
 *On the live site, asking [pallets/flask](https://github.com/pallets/flask) why `app.query` was added: it searches the history, finds the commits, and the answer streams in, citing the commits it used.*
 
-![Landing page](docs/screenshots/landing.jpg)
+![The landing page, with Try the live demo and Start for free](docs/screenshots/landing.jpg)
 
-The landing page plays an animated walkthrough of the whole flow: connect a model, ingest a repository, ask why, explore the history.
+**Try the live demo** opens a sample repository (pallets/flask) with no sign-up. Further down, the landing page plays an animated walkthrough of the whole flow: connect a model, ingest a repository, ask why, explore the history.
 
 ![Animated walkthrough](docs/screenshots/walkthrough.jpg)
 
@@ -87,9 +87,9 @@ Code Archaeologist makes that history answerable:
 
 *Bug origins traces each fix back to the commit that most likely caused it, and flags commits that needed several fixes.*
 
-![Who broke it? ranking three suspect commits for a bug report, each with a score and the reasons it was flagged](docs/screenshots/who-broke-it.jpg)
+![Who broke it? in the live demo, ranking suspect commits for a session-cookie bug, each with a score and the reasons it was flagged](docs/screenshots/who-broke-it.jpg)
 
-*Who broke it? takes a bug report with a stack-trace line and ranks the three most likely culprit commits, with the reasons for each.*
+*In the live demo, a report about the session cookie with `SESSION_COOKIE_PARTITIONED` and a stack-trace line. The suspects changed the code and the file it names, and the second is the commit that added that setting.*
 
 ## Bring your own model
 
