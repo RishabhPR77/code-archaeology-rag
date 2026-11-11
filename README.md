@@ -15,7 +15,7 @@ You bring your own model: connect an **Anthropic, OpenAI, Google Gemini, Groq or
 - **Measured search quality.** On 583 questions taken from three open-source repositories, the right commit is among the 8 the model reads for **81–89%** of them, up from 65–79% before the search was rebuilt. An automatic [accuracy check](#accuracy) found the bug that was holding it back.
 - **Answers stream in** word by word, with a **Stop** button that keeps what was written.
 - **Finds what broke.** Bug origins traces each bug fix back to the commit that introduced it, and **Who broke it?** ranks likely culprits for a new bug report. On 49 real bug reports from Flask, Click and HTTPX, the commit that caused the bug is in its top 3 for **57%**, nine times as often as checking the newest commits, and in the range of published research for the same task.
-- **Built to run for free and safely:** five LLM providers with each user's own encrypted key, GitHub and Google sign-in with optional two-step verification, 204 tests, linters and dependency scans in GitHub Actions CI, deployed on Render, Neon and Pinecone.
+- **Built to run for free and safely:** five LLM providers with each user's own encrypted key, GitHub and Google sign-in with optional two-step verification, 205 tests, linters and dependency scans in GitHub Actions CI, deployed on Render, Neon and Pinecone.
 
 ![Asking pallets/flask why app.query was added: it searches the history, finds the commits, and the answer streams in with citations](docs/screenshots/ask-streaming.gif)
 
@@ -386,7 +386,21 @@ cd backend
 python -m pytest
 ```
 
-There are 194 backend tests and 10 frontend tests. GitHub Actions lints the backend with ruff (rules in [`backend/ruff.toml`](backend/ruff.toml)) and runs pytest, lints the frontend with ESLint and runs its Vitest component tests, type-checks and builds it, and scans both for known vulnerabilities, on every push to `main` and every pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests replace the embedding model with a small stand-in, so CI installs only `requirements.txt`, without torch.
+There are 194 backend tests and 11 frontend tests. GitHub Actions lints the backend with ruff (rules in [`backend/ruff.toml`](backend/ruff.toml)) and runs pytest, lints the frontend with ESLint and runs its Vitest component tests, type-checks and builds it, and scans both for known vulnerabilities, on every push to `main` and every pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests replace the embedding model with a small stand-in, so CI installs only `requirements.txt`, without torch.
+
+**Load test (live site, Nov 11, 2026).** A read-only test from one machine with 1 to 50 simultaneous users, about 12 seconds per
+level ([script](docs/load-test.md)). Each request also includes about 350 ms of network round trip to Render's region.
+
+| Endpoint | Users | Requests/s | Median | 95th percentile | Errors |
+|---|---:|---:|---:|---:|---:|
+| `/api/health` (no database) | 10 | 18 | 434 ms | 996 ms | 0 |
+| | 50 | 48 | 679 ms | 2.2 s | 0 |
+| Demo Overview (sign-in check, database, analytics) | 5 | 7 | 527 ms | 1.3 s | 0 |
+| | 10 | 8 | 1.0 s | 2.1 s | 0 |
+| | 50 | 7.5 | 5.3 s | 9.9 s | 0 |
+
+The free instance (a tenth of a CPU) serves about **8 analytics pages a second**, about 480 a minute. Beyond about 10 users at
+once, requests queue rather than fail: 0 errors in 1,971 requests. Answers mostly wait on the user's model rather than this CPU.
 
 - **Auth:** sessions, cookie flags, rate limiting, admin handling, and signing out everywhere ending sessions on other devices.
 - **Account security:** two-step sign-in (codes, replay, recovery codes, Google sign-in), identical replies for registered and unknown emails, password reset and change ending other sessions, weak passwords refused, key rotation for sessions and stored secrets, per-account limits on wrong passwords from many IPs, `X-Forwarded-For` ignored, cross-site writes refused, the activity log, account deletion, and ingests resuming after a restart.
