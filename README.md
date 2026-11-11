@@ -17,9 +17,9 @@ You bring your own model: connect an **Anthropic, OpenAI, Google Gemini, Groq or
 - **Finds what broke.** Bug origins traces each bug fix back to the commit that introduced it, and **Who broke it?** ranks likely culprits for a new bug report. On 49 real bug reports from Flask, Click and HTTPX, the commit that caused the bug is in its top 3 for **57%**, nine times as often as checking the newest commits, and in the range of published research for the same task.
 - **Built to run for free and safely:** five LLM providers with each user's own encrypted key, GitHub and Google sign-in with optional two-step verification, 205 tests, linters and dependency scans in GitHub Actions CI, deployed on Render, Neon and Pinecone.
 
-![Asking pallets/flask why app.query was added: it searches the history, finds the commits, and the answer streams in with citations](docs/screenshots/ask-streaming.gif)
+![The live demo of pallets/flask: the overview, an answer about why app.query was added with the commits it cites, then Who broke it? ranking the commits behind a session-cookie bug](docs/screenshots/demo.gif)
 
-*On the live site, asking [pallets/flask](https://github.com/pallets/flask) why `app.query` was added: it searches the history, finds the commits, and the answer streams in, citing the commits it used.*
+*Recorded on the live demo of [pallets/flask](https://github.com/pallets/flask): the repository overview, an answer to why `app.query` was added with the 8 commits it cites, then **Who broke it?** ranking the commits behind a real session-cookie bug.*
 
 ![The landing page, with Try the live demo and Start for free](docs/screenshots/landing.jpg)
 
