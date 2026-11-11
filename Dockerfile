@@ -2,7 +2,7 @@
 # Slim build for free hosts (Render free = 512 MB): embeddings come from Pinecone's
 # hosted models, so there is no torch or local model in the image.
 
-FROM node:22-alpine AS web
+FROM node:25-alpine AS web
 WORKDIR /web
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
