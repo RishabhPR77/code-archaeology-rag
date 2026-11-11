@@ -1,5 +1,5 @@
 import {
-  ArrowRight, BarChart3, Bug, FileClock, FileSearch, GitMerge, KeyRound, PlayCircle, Search, ShieldCheck,
+  ArrowRight, BarChart3, Bug, FileClock, FileSearch, GitMerge, KeyRound, Lock, PlayCircle, Search, ShieldCheck,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link } from "react-router";
@@ -180,6 +180,7 @@ export function Landing() {
             <ul className="mt-6 space-y-3 text-sm text-muted">
               <li className="flex gap-2.5"><KeyRound className="mt-0.5 size-4 shrink-0 text-accent" /> Keys are encrypted at rest and never sent back to the browser.</li>
               <li className="flex gap-2.5"><ShieldCheck className="mt-0.5 size-4 shrink-0 text-accent" /> Each key is verified with the provider before it's saved.</li>
+              <li className="flex gap-2.5"><Lock className="mt-0.5 size-4 shrink-0 text-accent" /> Your repositories and chats are private to you, with optional two-step sign-in.</li>
             </ul>
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

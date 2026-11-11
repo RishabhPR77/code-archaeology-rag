@@ -116,7 +116,9 @@ export function ProductDemo() {
         await press("signup-email", 500);
         await type("jo@acme.dev", (email) => patch({ email }), 45);
         await press("signup-password", 500);
-        await type("••••••••••", (password) => patch({ password }), 40);
+        await type("••••••••••••", (password) => patch({ password }), 40);
+        await press("signup-confirm", 450);   // the real form asks for the password twice
+        await type("••••••••••••", (confirm) => patch({ confirm }), 35);
         await press("create", 600);
         patch({ creating: true });
         await sleep(700);

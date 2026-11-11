@@ -25,7 +25,7 @@ You bring your own model: connect an **Anthropic, OpenAI, Google Gemini, Groq or
 
 **Try the live demo** opens a sample repository (pallets/flask) with no sign-up. Further down, the landing page plays an animated walkthrough of the whole flow, from signing up to signing out: connect a model, ingest a repository, ask why, find what broke, explore the history.
 
-![Animated walkthrough](docs/screenshots/walkthrough.jpg)
+![The landing page walkthrough on its Ask step: an answer that cites the commits and pull request it came from](docs/screenshots/walkthrough.jpg)
 
 ---
 

@@ -63,7 +63,7 @@ export const TRACE_COMMITS = [
   ["3f9c2a1", "Move token refresh out"], ["a81e0c4", "Add idempotent retry"],
 ] as const;
 export interface DemoState {
-  name: string; email: string; password: string; creating: boolean; verify: boolean; code: string; confirming: boolean;
+  name: string; email: string; password: string; confirm: string; creating: boolean; verify: boolean; code: string; confirming: boolean;
   onSettings: boolean; expanded: boolean; keyText: string; saving: boolean; connected: boolean; model: string | null; toast: string | null;
   dialog: boolean; picked: string | null; range: boolean; ingesting: boolean; stage: number;
   askTab: boolean; question: string; asked: boolean; found: boolean; answer: number; sources: number;
@@ -71,7 +71,7 @@ export interface DemoState {
   grow: boolean; timelineTab: boolean; pickerOpen: boolean; pickerText: string; traced: boolean; menu: boolean;
 }
 export const START: DemoState = {
-  name: "", email: "", password: "", creating: false, verify: false, code: "", confirming: false,
+  name: "", email: "", password: "", confirm: "", creating: false, verify: false, code: "", confirming: false,
   onSettings: false, expanded: false, keyText: "", saving: false, connected: false, model: null, toast: null,
   dialog: false, picked: null, range: false, ingesting: false, stage: -1,
   askTab: false, question: "", asked: false, found: false, answer: 0, sources: 0,
@@ -80,7 +80,7 @@ export const START: DemoState = {
 };
 // What each scene looks like when it has finished — used for reduced motion
 export const FINAL: Record<number, Partial<DemoState>> = {
-  0: { name: "Jo Chen", email: "jo@acme.dev", password: "••••••••••" },
+  0: { name: "Jo Chen", email: "jo@acme.dev", password: "••••••••••••", confirm: "••••••••••••" },
   1: { onSettings: true, expanded: true, keyText: "sk-ant-••••••••••••••••", connected: true, model: MODELS[1] },
   2: { picked: REPOS[0].name, ingesting: true, stage: STAGES.length - 1 },
   3: { askTab: true, question: QUESTION, asked: true, found: true, answer: ANSWER.length, sources: SOURCES.length },

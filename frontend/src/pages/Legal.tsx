@@ -4,7 +4,7 @@ import { Link } from "react-router";
 import { Logo, ThemeToggle } from "../components/brand";
 import { useAuthConfig } from "../lib/queries";
 
-const UPDATED = "October 26, 2026";
+const UPDATED = "November 11, 2026";
 
 function LegalPage({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -43,7 +43,10 @@ export function Privacy() {
       <h2>What we collect</h2>
       <ul>
         <li><strong>Account details:</strong> your email address and name, and your profile picture if you sign in with
-          Google or GitHub. Passwords are stored only as a bcrypt hash.</li>
+          Google or GitHub. Passwords are stored only as a bcrypt hash. If you turn on two-step sign-in, its secret is
+          encrypted and its recovery codes are stored only as hashes.</li>
+        <li><strong>Security activity:</strong> sign-ins, failed attempts and changes to your account's security, with the
+          browser and a shortened IP address (for example 203.0.113.x), so you can spot activity that wasn't you.</li>
         <li><strong>Model provider API keys</strong> you add (Anthropic, OpenAI, Google Gemini, Groq or OpenRouter). They are
           encrypted at rest and never shown back to you in full.</li>
         <li><strong>GitHub access:</strong> if you connect GitHub, we store encrypted access tokens with read-only access to the
@@ -55,8 +58,11 @@ export function Privacy() {
 
       <h2>How we use it</h2>
       <ul>
-        <li>To sign you in, verify your email address with a one-time code, and keep you signed in with a single
-          session cookie. We use no analytics or advertising cookies.</li>
+        <li>To sign you in, verify your email address or reset your password with a one-time code, and keep you signed in
+          with a session cookie (plus short-lived cookies while you sign in with Google, GitHub or two-step sign-in). We use
+          no analytics or advertising cookies.</li>
+        <li>To protect accounts: attempts to sign in are counted to slow down password guessing. These counts are stored
+          only as hashes, never as raw IP or email addresses, and deleted within a day.</li>
         <li>To answer your questions: relevant excerpts of a repository's history are sent, with your question, to the
           model provider you selected, using your own API key. That provider's terms and privacy policy apply to
           what it receives.</li>
@@ -74,13 +80,15 @@ export function Privacy() {
       <ul>
         <li>Ingested repositories, their indexed history and the questions about them are deleted automatically after
           a limited time (72 hours by default), or immediately when you delete the repository.</li>
-        <li>Account details and saved API keys are kept until you remove them or ask us to delete your account.</li>
+        <li>Security activity is kept for 90 days.</li>
+        <li>Account details and saved API keys are kept until you remove them or delete your account.</li>
       </ul>
 
       <h2>Your choices</h2>
       <p>
         You can delete repositories, clear question history, remove API keys and disconnect GitHub from within the
-        app. To delete your account entirely or ask about your data, <Contact />.
+        app. You can also delete your whole account in Settings, which removes everything listed above straight away.
+        To ask about your data, <Contact />.
       </p>
     </LegalPage>
   );
