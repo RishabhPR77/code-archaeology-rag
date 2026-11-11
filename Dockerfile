@@ -10,7 +10,7 @@ COPY frontend/ ./
 RUN npm run build
 
 
-FROM python:3.12-slim
+FROM python:3.15-slim
 
 # git is needed to clone repositories during ingestion
 RUN apt-get update && apt-get install -y --no-install-recommends git \
