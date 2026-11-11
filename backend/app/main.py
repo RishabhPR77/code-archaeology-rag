@@ -6,6 +6,7 @@ import logging
 import re
 import time
 import uuid
+from urllib.parse import urlsplit
 from contextlib import asynccontextmanager, suppress
 
 from pathlib import Path
@@ -89,9 +90,12 @@ def create_app() -> FastAPI:
     async def same_origin_writes(request: Request, call_next):
         """Refuse changes sent from another site's page. SameSite cookies already stop most of these
         (CSRF); checking the Origin header as well means one browser quirk can't undo it."""
-        origin = request.headers.get("origin")
+        origin = (request.headers.get("origin") or "").rstrip("/")
+        # The site's own pages (same host, whatever the configured frontend URL) and the allowed origins pass.
+        # Browsers set Origin themselves, so another site's page can't pretend to be this one.
+        same_site = urlsplit(origin).netloc == request.headers.get("host", "")
         if (request.method not in ("GET", "HEAD", "OPTIONS") and request.url.path.startswith("/api/")
-                and origin and origin.rstrip("/") not in allowed_origins):
+                and origin and not same_site and origin not in allowed_origins):
             return JSONResponse({"detail": "Requests from other sites aren't allowed."}, status_code=403)
         return await call_next(request)
 

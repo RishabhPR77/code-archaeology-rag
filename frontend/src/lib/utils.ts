@@ -9,6 +9,12 @@ export function formatDate(iso: string | null | undefined, opts: Intl.DateTimeFo
   return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric", ...opts });
 }
 
+/** "Nov 11, 2026, 9:42 AM". dateStyle can't be combined with year/month/day, so it isn't built on formatDate. */
+export function formatDateTime(iso: string | null | undefined) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
 export function relativeTime(iso: string | null | undefined) {
   if (!iso) return "—";
   const diff = new Date(iso).getTime() - Date.now();

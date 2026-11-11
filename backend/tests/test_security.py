@@ -218,6 +218,10 @@ def test_writes_from_other_sites_are_refused(user_client):
     assert r.status_code == 403
     r = user_client.post("/api/auth/logout", headers={"Origin": get_settings().frontend_url})
     assert r.status_code == 204
+    # The site's own page, served from the API's host, even when the frontend URL setting differs
+    register(user_client, email="second@example.com")
+    r = user_client.post("/api/auth/logout", headers={"Origin": "http://testserver"})
+    assert r.status_code == 204
 
 
 def test_every_response_has_a_request_id(client):

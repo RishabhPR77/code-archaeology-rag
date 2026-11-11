@@ -1,5 +1,5 @@
 import { lazy, Suspense, type ReactNode } from "react";
-import { createBrowserRouter, Navigate, Outlet, useLocation } from "react-router";
+import { createBrowserRouter, Navigate, Outlet, useLocation, useRouteError } from "react-router";
 
 import { Spinner } from "./components/ui";
 import { AppLayout } from "./layouts/AppLayout";
@@ -22,6 +22,22 @@ function FullPageSpinner() {
   return (
     <div className="grid h-full place-items-center">
       <Spinner className="size-5" />
+    </div>
+  );
+}
+
+// Shown if a page throws while rendering, instead of a blank screen
+function RouteError() {
+  const error = useRouteError();
+  console.error(error);
+  return (
+    <div className="grid h-full place-items-center px-4 text-center">
+      <div>
+        <h1 className="text-lg font-semibold">Something went wrong on this page</h1>
+        <p className="mt-1 text-sm text-muted">Reloading usually fixes it. Your data is safe.</p>
+        <button onClick={() => window.location.reload()}
+                className="mt-4 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-fg cursor-pointer">Reload</button>
+      </div>
     </div>
   );
 }
@@ -62,6 +78,7 @@ export const router = createBrowserRouter([
   { path: "/two-factor", element: <GuestOnly><TwoFactorPage /></GuestOnly> },
   {
     path: "/app",
+    errorElement: <RouteError />,
     element: (
       <RequireAuth>
         <AppLayout>

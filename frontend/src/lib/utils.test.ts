@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { commitSpan, relativeTime, shortSha } from "./utils";
+import { commitSpan, formatDateTime, relativeTime, shortSha } from "./utils";
 
 describe("commitSpan", () => {
   it("names the latest commits plainly", () => {
@@ -18,5 +18,12 @@ describe("small formatters", () => {
   it("says just now for the last minute", () => {
     expect(relativeTime(new Date(Date.now() - 5_000).toISOString())).toBe("just now");
     expect(relativeTime(null)).toBe("—");
+  });
+});
+
+describe("formatDateTime", () => {
+  it("shows a date and time without throwing", () => {
+    expect(formatDateTime("2026-11-11T09:42:00Z")).toMatch(/2026/);
+    expect(formatDateTime(null)).toBe("—");
   });
 });

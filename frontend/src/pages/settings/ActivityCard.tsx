@@ -3,7 +3,7 @@ import { ShieldAlert, ShieldCheck } from "lucide-react";
 
 import { Card, CardHeader, ErrorNotice, Skeleton } from "../../components/ui";
 import { api } from "../../lib/api";
-import { formatDate, relativeTime } from "../../lib/utils";
+import { formatDateTime, relativeTime } from "../../lib/utils";
 import { activityKey } from "./SecurityCard";
 
 // Events worth a second look if they weren't you
@@ -31,7 +31,7 @@ export function ActivityCard() {
                   {[e.device, e.ip && `network ${e.ip}`].filter(Boolean).join(" · ") || "No device details"}
                 </p>
               </div>
-              <time dateTime={e.created_at} title={formatDate(e.created_at, { dateStyle: "medium", timeStyle: "short" })}
+              <time dateTime={e.created_at} title={formatDateTime(e.created_at)}
                     className="shrink-0 text-xs text-subtle">{relativeTime(e.created_at)}</time>
             </li>
           ))}
