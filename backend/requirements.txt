@@ -16,7 +16,7 @@ bcrypt==5.0.0
 cryptography==50.0.2
 httpx==0.28.1
 pyotp==2.10.0          # two-step sign-in codes (TOTP)
-segno==1.6.1          # the QR code that sets up an authenticator app
+segno==1.6.6          # the QR code that sets up an authenticator app
 
 # LLM providers (users bring their own keys)
 anthropic==2.3.0
