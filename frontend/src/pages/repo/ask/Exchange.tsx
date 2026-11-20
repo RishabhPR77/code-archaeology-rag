@@ -48,7 +48,7 @@ export function Sources({ result, repoUrl }: { result: QueryResult; repoUrl: str
                 <div className="mt-2 flex items-center gap-2 text-[11px] text-subtle">
                   {s.pr_number && <span className="inline-flex items-center gap-1"><GitPullRequest className="size-3" />#{s.pr_number}</span>}
                   <span className="truncate font-mono">{s.files.slice(0, 2).join(", ")}{s.files.length > 2 && ` +${s.files.length - 2}`}</span>
-                  <span className="ml-auto shrink-0 font-mono">{s.score.toFixed(2)}</span>
+                  {s.score !== null && <span className="ml-auto shrink-0 font-mono">{s.score.toFixed(2)}</span>}
                 </div>
               </a>
             </li>

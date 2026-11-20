@@ -196,7 +196,7 @@ export interface Source {
   author: string;
   timestamp: string;
   files: string[];
-  score: number;
+  score: number | null;   // null when listed for its date ("what happened last month?"), not by search
   has_pr: boolean;
   pr_number: number | null;
   message: string;

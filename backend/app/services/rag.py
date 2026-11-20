@@ -2,8 +2,9 @@
 """Retrieval-augmented answers over commit history, provider-agnostic."""
 import re
 from collections.abc import Callable
+from datetime import datetime, timedelta
 
-from retrieval import analytics, suspects as suspect_ranking
+from retrieval import analytics, suspects as suspect_ranking, time_window
 from storage.vector_store import VectorStore
 
 SYSTEM_PROMPT = """You are Code Archaeologist — an expert at explaining why code changes were made.
@@ -38,6 +39,10 @@ MODE_INSTRUCTIONS = {
 }
 
 PR_LISTING_TOP_K = 60
+# A question about a period gets every commit in it: in full when there are few, one line each when many
+PERIOD_DETAIL_LIMIT = 25
+PERIOD_LIST_LIMIT = 200
+PERIOD_SOURCES = 60
 
 # (system, prompt) -> answer text
 Generate = Callable[[str, str], str]
@@ -98,7 +103,7 @@ Has PR: {meta['has_pr']}
             + "RETRIEVED COMMITS:\n" + "\n\n".join(blocks))
 
 
-def _source(chunk: dict) -> dict:
+def _source(chunk: dict, score: float | None = None) -> dict:
     meta = chunk["metadata"]
     first = chunk["text"].split("\n")[0]
     return {
@@ -106,7 +111,7 @@ def _source(chunk: dict) -> dict:
         "author":    meta["author"],
         "timestamp": meta["timestamp"],
         "files":     [f.strip() for f in meta["files"].split(", ") if f.strip()],
-        "score":     chunk["score"],
+        "score":     chunk["score"] if "score" in chunk else score,
         "has_pr":    meta["has_pr"],
         "pr_number": meta.get("pr_number") or None,
         "message":   first.split("]: ", 1)[1] if "]: " in first else first,
@@ -116,15 +121,76 @@ def _source(chunk: dict) -> dict:
 NO_COMMITS = "No relevant commits were found for this question."
 
 
+def _day(when) -> str:
+    return when.strftime("%Y-%m-%d")
+
+
+def _prepare_period(question: str, query: str, period: "time_window.Period", chunks: list[dict], mode: str,
+                    only_pr: bool, history: History, synced_at: datetime | None) -> dict:
+    """Answer from every commit in the period, not the few that search would pick."""
+    in_period = [c for c in time_window.commits_in(period, chunks) if not only_pr or c["metadata"]["has_pr"]]
+    times = [time_window.committed_at(c) for c in chunks]
+    oldest, newest = min(times), max(times)
+    # Commits after the last sync aren't here. When it was is the reliable signal; without it, only a
+    # gap of several days since the newest saved commit is worth a mention (a quiet week isn't staleness)
+    resync = ""
+    if synced_at is not None and period.end - synced_at > timedelta(days=1):
+        resync = (f" This history was saved on {_day(synced_at)}, so commits made after that aren't included:"
+                  " use Re-sync on the repository page to fetch them.")
+    elif synced_at is None and period.end - newest > timedelta(days=3):
+        resync = (f" The newest commit saved here is from {_day(newest)}. If the repository has changed since,"
+                  " use Re-sync on the repository page to fetch the newer commits.")
+    if not in_period:
+        message = (f"There are no commits {'with a pull request ' if only_pr else ''}from {_day(period.start)} to "
+                   f"{_day(period.end)} in this repository's saved history, which runs from {_day(oldest)} to "
+                   f"{_day(newest)}.{resync}")
+        return {"search_query": query, "sources": [], "prompt": None, "no_answer": message}
+
+    shown = in_period[-PERIOD_LIST_LIMIT:]
+    detailed = len(shown) <= PERIOD_DETAIL_LIMIT
+    blocks = []
+    for c in shown:
+        s = _source(c)
+        day = _day(time_window.committed_at(c))
+        if detailed:
+            blocks.append(f"--- {day} · commit {s['sha']} · {s['author']} ---\nFiles: {c['metadata']['files']}\n"
+                          f"{c['text'][:700]}")
+        else:
+            pr = f" · PR #{s['pr_number']}" if s["pr_number"] else ""
+            blocks.append(f"{day} · `{s['sha']}` · {s['author']} · {s['message'][:140]}{pr}"
+                          f" · files: {', '.join(s['files'][:3])}")
+
+    listed = (f"These are all {len(in_period)} commits" if len(shown) == len(in_period)
+              else f"There are {len(in_period)} commits; the {len(shown)} newest are listed")
+    instruction = MODE_INSTRUCTIONS.get(mode, "")
+    parts = []
+    if history:
+        parts.append(f"CONVERSATION SO FAR (context only):\n{_conversation(history, HISTORY_ANSWER_CHARS)}")
+    parts.append(f"QUESTION:\n{question}")
+    parts.append(f'PERIOD: "{period.label}", from {_day(period.start)} to {_day(period.end)}.\n'
+                 f"{listed} from this period in the repository's saved history, oldest first"
+                 f"{'' if detailed else ', one line each'}. They are the whole period, not a sample: say how many"
+                 f" commits there were, group the work into themes with dates, and cite commits by short SHA.{resync}")
+    if instruction:
+        parts.append(f"FORMAT: {instruction}")
+    parts.append("COMMITS IN THE PERIOD:\n" + ("\n\n" if detailed else "\n").join(blocks))
+    sources = [_source(c) for c in reversed(shown)][:PERIOD_SOURCES]   # newest first
+    return {"search_query": query, "sources": sources, "prompt": "\n\n".join(parts), "period": period}
+
+
 def prepare(question: str, namespace: str, generate: Generate, mode: str = "detailed",
             only_pr: bool = False, top_k: int = 8, history: History | None = None,
-            chunks: list[dict] | None = None) -> dict:
+            chunks: list[dict] | None = None, synced_at: datetime | None = None) -> dict:
     """Everything before the model writes the answer: rewrite a follow-up, search, build the prompt.
     `prompt` is None when nothing relevant was found, so there's nothing to ask the model.
     `chunks` (the repository's saved commits) lets search skip downloading commit text from the index."""
     history = (history or [])[-HISTORY_TURNS:]
     # Follow-ups are searched as standalone questions; the first question in a chat is used as-is
     query = standalone_question(question, history, generate)
+    # "What happened last month?" is about every commit in a period, not the few most similar ones
+    period = time_window.find_period(query)
+    if period is not None and chunks:
+        return _prepare_period(question, query, period, chunks, mode, only_pr, history, synced_at)
     store = VectorStore(namespace)
     # For PR listing questions — pull many PR-linked commits, each trimmed
     if _is_pr_listing_question(query):
@@ -139,9 +205,9 @@ def prepare(question: str, namespace: str, generate: Generate, mode: str = "deta
 
 def ask(question: str, namespace: str, generate: Generate, mode: str = "detailed",
         only_pr: bool = False, top_k: int = 8, history: History | None = None,
-        chunks: list[dict] | None = None) -> dict:
-    p = prepare(question, namespace, generate, mode, only_pr, top_k, history, chunks)
-    answer = generate(SYSTEM_PROMPT, p["prompt"]) if p["prompt"] else NO_COMMITS
+        chunks: list[dict] | None = None, synced_at: datetime | None = None) -> dict:
+    p = prepare(question, namespace, generate, mode, only_pr, top_k, history, chunks, synced_at)
+    answer = generate(SYSTEM_PROMPT, p["prompt"]) if p["prompt"] else p.get("no_answer") or NO_COMMITS
     return {"answer": answer, "sources": p["sources"], "search_query": p["search_query"]}
 
 

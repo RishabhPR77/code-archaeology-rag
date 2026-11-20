@@ -339,7 +339,7 @@ class SourceOut(BaseModel):
     author:    str
     timestamp: str
     files:     list[str]
-    score:     float
+    score:     float | None = None   # None for a commit listed because of its date, not a search
     has_pr:    bool
     pr_number: int | None
     message:   str

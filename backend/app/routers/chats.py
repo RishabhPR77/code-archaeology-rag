@@ -77,7 +77,7 @@ def ask(body: AskIn, repo: Repo = Depends(owned_repo),
     provider, model, generate = llm_for(db, user)
     try:
         result = rag.ask(body.question, repo.namespace, generate, mode=body.mode, only_pr=body.only_pr,
-                         history=_chat_history(db, chat), chunks=chunks)
+                         history=_chat_history(db, chat), chunks=chunks, synced_at=as_utc(repo.ready_at))
     except ProviderError as e:
         raise provider_http_error(e) from e
     return _save_exchange(db, repo.id, chat.id if chat else None, body, provider, model,
@@ -103,7 +103,7 @@ def ask_stream(body: AskIn, repo: Repo = Depends(owned_repo),
         prepared = rag.prepare(body.question, repo.namespace,
                                lambda system, prompt: llm.generate(provider, api_key, model_id, system, prompt),
                                mode=body.mode, only_pr=body.only_pr, history=_chat_history(db, chat),
-                               chunks=chunks)
+                               chunks=chunks, synced_at=as_utc(repo.ready_at))
     except ProviderError as e:
         raise provider_http_error(e) from e
     repo_id, chat_id = repo.id, chat.id if chat else None
@@ -115,7 +115,7 @@ def ask_stream(body: AskIn, repo: Repo = Depends(owned_repo),
         parts = []
         try:
             pieces = (llm.stream(provider, model, api_key, rag.SYSTEM_PROMPT, prepared["prompt"])
-                      if prepared["prompt"] else iter([rag.NO_COMMITS]))
+                      if prepared["prompt"] else iter([prepared.get("no_answer") or rag.NO_COMMITS]))
             for piece in pieces:
                 parts.append(piece)
                 yield _sse("delta", {"text": piece})

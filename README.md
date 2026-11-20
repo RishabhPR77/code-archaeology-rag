@@ -15,7 +15,7 @@ You bring your own model: connect an **Anthropic, OpenAI, Google Gemini, Groq or
 - **Measured search quality.** On 583 questions taken from three open-source repositories, the right commit is among the 8 the model reads for **81–89%** of them, up from 65–79% before the search was rebuilt. An automatic [accuracy check](#accuracy) found the bug that was holding it back.
 - **Answers stream in** word by word, with a **Stop** button that keeps what was written.
 - **Finds what broke.** Bug origins traces each bug fix back to the commit that introduced it, and **Who broke it?** ranks likely culprits for a new bug report. On 49 real bug reports from Flask, Click and HTTPX, the commit that caused the bug is in its top 3 for **57%**, nine times as often as checking the newest commits, and in the range of published research for the same task.
-- **Built to run for free and safely:** five LLM providers with each user's own encrypted key, GitHub and Google sign-in with optional two-step verification, 205 tests, linters and dependency scans in GitHub Actions CI, deployed on Render, Neon and Pinecone.
+- **Built to run for free and safely:** five LLM providers with each user's own encrypted key, GitHub and Google sign-in with optional two-step verification, 230 tests, linters and dependency scans in GitHub Actions CI, deployed on Render, Neon and Pinecone.
 
 ![The live demo of pallets/flask: the overview, an answer about why app.query was added with the commits it cites, then Who broke it? ranking the commits behind a session-cookie bug](docs/screenshots/demo.gif)
 
@@ -63,7 +63,7 @@ Code Archaeologist makes that history answerable:
 
 | | |
 |---|---|
-| **Ask** | Chat-style Q&A over the history, with Detailed, Summary and Bullets modes. Every answer lists its source commits (SHA, author, date, files, relevance) and links each cited SHA to GitHub. Questions are kept in chats: start a **New chat** any time, and switch between or delete past chats. Follow-ups such as “who reviewed it?” understand the chat's last three exchanges. Answers **stream in** as the model writes them, and **Stop** ends one early while keeping what was written, marked as stopped. |
+| **Ask** | Chat-style Q&A over the history, with Detailed, Summary and Bullets modes. Every answer lists its source commits (SHA, author, date, files, relevance) and links each cited SHA to GitHub. Questions are kept in chats: start a **New chat** any time, and switch between or delete past chats. Follow-ups such as “who reviewed it?” understand the chat's last three exchanges. Answers **stream in** as the model writes them, and **Stop** ends one early while keeping what was written, marked as stopped. Questions about a period (*what happened in the last month?*, *since October*, *in 2025*) are answered from **every** commit in it, oldest first, instead of the 8 that search would pick. |
 | **File timeline** | Pick any file or folder from a searchable list and trace every commit that touched it, with a monthly activity chart and the full chronology, plus a summary of the phases of change when a model is connected. |
 | **Bug origins** | Every bug-fix commit traced back to the commits that most likely introduced the bug, using `git blame` on the lines the fix changed (the SZZ method). Shows how long each bug lived and which commits sit behind several fixes. No LLM needed. |
 | **Who broke it?** | Describe a bug or paste an error, and get the three most likely culprit commits. They're ranked by how well they match the report (hybrid search), whether their diff changed code it names (`follow_redirects`, `URL.join`), whether they touched files it names (stack-trace paths included), how big the change was, its type, whether Bug origins traced an earlier bug to it, and a small nudge for recent changes. Changes to only docs or tests are left out. Every suspect lists the reasons it was flagged, and your model explains them and suggests how to confirm one. Suspects, not proof. |
@@ -386,7 +386,7 @@ cd backend
 python -m pytest
 ```
 
-There are 194 backend tests and 11 frontend tests. GitHub Actions lints the backend with ruff (rules in [`backend/ruff.toml`](backend/ruff.toml)) and runs pytest, lints the frontend with ESLint and runs its Vitest component tests, type-checks and builds it, and scans both for known vulnerabilities, on every push to `main` and every pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests replace the embedding model with a small stand-in, so CI installs only `requirements.txt`, without torch.
+There are 219 backend tests and 11 frontend tests. GitHub Actions lints the backend with ruff (rules in [`backend/ruff.toml`](backend/ruff.toml)) and runs pytest, lints the frontend with ESLint and runs its Vitest component tests, type-checks and builds it, and scans both for known vulnerabilities, on every push to `main` and every pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The tests replace the embedding model with a small stand-in, so CI installs only `requirements.txt`, without torch.
 
 **Load test (live site, Nov 11, 2026).** A read-only test from one machine with 1 to 50 simultaneous users, about 12 seconds per
 level ([script](docs/load-test.md)). Each request also includes about 350 ms of network round trip to Render's region.
