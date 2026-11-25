@@ -52,6 +52,11 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql
     restart: unless-stopped
+    # A name of its own: Tejaskrit's database is also called "db", on the network the app shares with
+    # Caddy, so the app must never look up plain "db"
+    networks:
+      default:
+        aliases: [codearch-db]
     mem_limit: 192m
     memswap_limit: 384m
     cpus: 0.5

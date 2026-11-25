@@ -22,7 +22,7 @@ password=$(sed -n 's/^POSTGRES_PASSWORD=//p' db.env)
 if [ ! -f codearch.env ]; then
   cat > codearch.env <<EOF
 # Filled in by setup.sh
-DATABASE_URL=postgresql://codearch:${password}@db:5432/codearch
+DATABASE_URL=postgresql://codearch:${password}@codearch-db:5432/codearch
 FRONTEND_URL=https://${DOMAIN}
 PINECONE_INDEX=code-archaeologist-llama
 EMBEDDING_PROVIDER=pinecone
