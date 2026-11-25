@@ -1,0 +1,13 @@
+# Code Archaeologist's site block. APPEND it to the end of Tejaskrit's Caddyfile
+# (/home/azureuser/app/deploy/azure/Caddyfile); don't change anything above it.
+# Replace codearch.example.duckdns.org with your domain. Caddy gets the HTTPS certificate by itself.
+
+codearch.example.duckdns.org {
+	encode zstd gzip
+	reverse_proxy codearch:10000 {
+		# The visitor's real address, for the rate limits. Caddy overwrites any X-Real-IP a visitor sends.
+		header_up X-Real-IP {remote_host}
+		# Send streamed answers (server-sent events) to the browser as they're written
+		flush_interval -1
+	}
+}

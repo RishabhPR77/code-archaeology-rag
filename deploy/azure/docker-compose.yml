@@ -1,0 +1,43 @@
+# Code Archaeologist on the Azure VM, as a second copy of the site next to the one on Render.
+#
+# It shares the VM with Tejaskrit without touching it: this is its own Compose project ("codearch"),
+# it has hard memory and CPU limits so it can never starve Tejaskrit, and it publishes no ports.
+# Tejaskrit's Caddy (Compose project "azure") forwards HTTPS traffic to it over the "azure_default"
+# network, which this container joins only so Caddy can reach it.
+name: codearch
+
+services:
+  codearch:
+    # Built by .github/workflows/image.yml after CI passes on main
+    image: ghcr.io/rishabhpr77/code-archaeology-rag:latest
+    env_file: codearch.env
+    environment:
+      ENVIRONMENT: production
+      PORT: "10000"
+      # Caddy sets X-Real-IP to the visitor's address (see Caddyfile.site); nothing else can reach this
+      # container, so the header can't be faked. X-Forwarded-For is never trusted.
+      CLIENT_IP_HEADER: x-real-ip
+      # One ingest at a time keeps memory and CPU use predictable on a shared VM
+      MAX_CONCURRENT_INGESTS: "1"
+    restart: unless-stopped
+    # Limits that protect Tejaskrit: at most 512 MB of RAM (plus 512 MB of swap) and one of the two CPUs.
+    # If Code Archaeologist ever needs more, only it is restarted, and interrupted ingests resume.
+    mem_limit: 512m
+    memswap_limit: 1g
+    cpus: 1.0
+    networks:
+      azure_default:
+        aliases: [codearch]
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:10000/api/health', timeout=5)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+networks:
+  azure_default:
+    external: true
