@@ -1,9 +1,10 @@
 # Code Archaeologist on the Azure VM, as a second copy of the site next to the one on Render.
 #
-# It shares the VM with Tejaskrit without touching it: this is its own Compose project ("codearch"),
-# it has hard memory and CPU limits so it can never starve Tejaskrit, and it publishes no ports.
-# Tejaskrit's Caddy (Compose project "azure") forwards HTTPS traffic to it over the "azure_default"
-# network, which this container joins only so Caddy can reach it.
+# It shares the VM with Tejaskrit without touching it: this is its own Compose project ("codearch") with
+# its own database container, both with hard memory and CPU limits so they can never starve Tejaskrit,
+# and nothing publishes a port. Tejaskrit's Caddy (Compose project "azure") forwards HTTPS traffic to the
+# app over the "azure_default" network, which the app joins only so Caddy can reach it. The database is on
+# this project's own network, out of Tejaskrit's reach and Tejaskrit's out of ours.
 name: codearch
 
 services:
@@ -19,6 +20,9 @@ services:
       CLIENT_IP_HEADER: x-real-ip
       # One ingest at a time keeps memory and CPU use predictable on a shared VM
       MAX_CONCURRENT_INGESTS: "1"
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
     # Limits that protect Tejaskrit: at most 512 MB of RAM (plus 512 MB of swap) and one of the two CPUs.
     # If Code Archaeologist ever needs more, only it is restarted, and interrupted ingests resume.
@@ -26,6 +30,7 @@ services:
     memswap_limit: 1g
     cpus: 1.0
     networks:
+      default:
       azure_default:
         aliases: [codearch]
     logging:
@@ -37,6 +42,30 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+
+  # This copy's own PostgreSQL. Small settings for a small database; the data lives in a Docker volume on
+  # the VM's disk, which survives restarts and updates.
+  db:
+    image: postgres:18-alpine
+    env_file: db.env
+    command: ["postgres", "-c", "shared_buffers=32MB", "-c", "max_connections=30", "-c", "work_mem=4MB"]
+    volumes:
+      - pgdata:/var/lib/postgresql
+    restart: unless-stopped
+    mem_limit: 192m
+    memswap_limit: 384m
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "2" }
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U codearch -d codearch"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
 
 networks:
   azure_default:
